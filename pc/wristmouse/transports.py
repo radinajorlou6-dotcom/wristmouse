@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import socket
+import time
 
 log = logging.getLogger("wristmouse")
 
@@ -154,6 +155,7 @@ class BleLink:
 
     def __init__(self, client):
         self.client = client
+        self.last_rx = time.monotonic()
         self.queue = asyncio.Queue(maxsize=200)
         self.writer_task = asyncio.create_task(self._writer())
 
@@ -207,6 +209,44 @@ class BleTransport:
                 pass
         self.status = "off"
 
+    async def _watch_stream(self, client, link, gone, on_data):
+        """The watch streams constantly while subscribed. If data stops while still 'connected'
+        (e.g. the watch missed the subscribe during a quick reconnect), subscribe again; if that
+        doesn't help, drop the connection so the outer loop reconnects from scratch."""
+        tries = 0
+        resub_at = 0.0
+        while not gone.is_set():
+            try:
+                await asyncio.wait_for(gone.wait(), 2.0)
+            except asyncio.TimeoutError:
+                pass
+            if gone.is_set():
+                return
+            now = time.monotonic()
+            if link.last_rx > resub_at:
+                tries = 0  # real data has arrived since the last re-subscribe
+            if now - max(link.last_rx, resub_at) <= 3.0:
+                continue
+            tries += 1
+            if tries > 2:
+                log.info("BLE: still no data from the watch, reconnecting")
+                self.status = "no data, reconnecting…"
+                return
+            log.info("BLE: no data from the watch, re-subscribing (try %d)", tries)
+            self.status = "no data, re-subscribing…"
+            try:
+                try:
+                    await client.stop_notify(TX_UUID)
+                except Exception:
+                    pass
+                await asyncio.sleep(0.3)
+                await client.start_notify(TX_UUID, on_data)
+                link.send("HELLO-PC")
+                resub_at = time.monotonic()
+            except Exception as e:
+                log.info("BLE: re-subscribe failed: %s", e)
+                return
+
     async def _run(self):
         try:
             from bleak import BleakClient, BleakScanner
@@ -232,11 +272,16 @@ class BleTransport:
                 await client.connect(timeout=15.0)
                 link = BleLink(client)
                 buf = LineBuffer(lambda line: self.hub.on_line(link, line))
-                await client.start_notify(TX_UUID, lambda _c, data: buf.feed(bytes(data)))
+
+                def on_data(_c, data, link=link, buf=buf):
+                    link.last_rx = time.monotonic()
+                    buf.feed(bytes(data))
+
+                await client.start_notify(TX_UUID, on_data)
                 self.hub.link_up(link)
                 self.status = "connected to %s" % (dev.name or dev.address)
                 link.send("HELLO-PC")
-                await gone.wait()
+                await self._watch_stream(client, link, gone, on_data)
             except asyncio.CancelledError:
                 raise
             except Exception as e:

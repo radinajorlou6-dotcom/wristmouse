@@ -393,7 +393,10 @@ class App:
             pass
 
         s = self.core.status()
-        if s["connected"]:
+        if s["connected"] and s["rate"] < 5:
+            self.conn_lbl.config(text="● Connected via %s, but no motion data yet… (fixing itself)" % s["via"],
+                                 foreground="#a15c00")
+        elif s["connected"]:
             self.conn_lbl.config(text="● Connected via %s%s" % (s["via"], "  (%s)" % s["watch"] if s["watch"] else ""),
                                  foreground="#0a7d2c")
         else:

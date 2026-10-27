@@ -188,8 +188,10 @@ class BleLink(
 
         override fun onConnectionStateChange(dev: BluetoothDevice, status: Int, newState: Int) {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
+                // Don't clear `subscribed` here: this callback can arrive after the laptop's
+                // subscribe request on a quick reconnect, which left the watch silent.
+                if (device?.address != dev.address) subscribed = false
                 device = dev
-                subscribed = false
                 mtu = 23
                 Status.ble = "Bluetooth: connecting…"
                 main.post { stopAdvertising() }
@@ -256,7 +258,18 @@ class BleLink(
                 if (rx.length > 8192) rx.setLength(0)
             }
             for (l in lines) {
-                if (l == "HELLO-PC") onConnected() else onLine(l)
+                if (l == "HELLO-PC") {
+                    // the laptop only sends this after subscribing, so we know it's listening
+                    device = dev
+                    if (!subscribed) {
+                        subscribed = true
+                        Status.ble = "Bluetooth: connected"
+                    }
+                    onConnected()
+                    pump()
+                } else {
+                    onLine(l)
+                }
             }
         }
 

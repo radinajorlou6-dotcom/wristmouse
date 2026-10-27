@@ -10,11 +10,11 @@ from .transports import local_ipv4s
 
 CHEATSHEET = (
     "Palm up, hold 1 s  →  pause / resume mouse\n"
-    "Tilt / sweep hand  →  move cursor\n"
+    "Point / swing your forearm  →  move cursor\n"
     "Pinch (thumb + index)  →  left click\n"
     "Double pinch  →  right click\n"
     "Triple pinch  →  voice typing (stops when you stop talking)\n"
-    "Quick wrist flick down / up  →  scroll"
+    "Quick flick down / up (or twist)  →  scroll"
 )
 
 VOICE_HELP = (
@@ -118,8 +118,8 @@ class App:
     def _tab_gestures(self, nb):
         t = ttk.Frame(nb, padding=10)
         self._slider(t, "Cursor speed", "cursor_gain", 200, 3000, "{:.0f}")
-        self._slider(t, "Up/down speed boost", "cursor_y_scale", 0.5, 5, "{:.1f}×",
-                     help_text="Raise this if reaching the top/bottom of the screen takes too much wrist movement.")
+        self._slider(t, "Up/down speed", "cursor_y_gain", 0.5, 4, "{:.1f}×",
+                     help_text="Raise this if reaching the top/bottom of the screen takes too much arm movement.")
         self._slider(t, "Cursor acceleration", "cursor_accel", 0, 2)
         self._slider(t, "Pinch threshold", "pinch_threshold", 0.3, 6,
                      help_text="Lower = more sensitive. Use “Calibrate pinch” to set it automatically.")
@@ -128,6 +128,21 @@ class App:
         self._slider(t, "Scroll amount", "scroll_notches", 1, 10, "{:.0f}", integer=True)
         self._slider(t, "Double-pinch speed (ms)", "multi_tap_window_ms", 200, 700, "{:.0f}", integer=True)
 
+        f = ttk.Frame(t)
+        f.pack(fill="x", pady=4)
+        ttk.Label(f, text="Scroll by", width=22).pack(side="left")
+        self.sg = tk.StringVar(value={"flick": "Flicking up/down", "twist": "Twisting the wrist"}[self.cfg["scroll_gesture"]])
+        cb = ttk.Combobox(f, textvariable=self.sg, state="readonly", width=20,
+                          values=["Flicking up/down", "Twisting the wrist"])
+        cb.pack(side="left", padx=6)
+        cb.bind("<<ComboboxSelected>>", lambda e: self._set(
+            "scroll_gesture", "twist" if self.sg.get().startswith("Twist") else "flick"))
+        self.invy = tk.BooleanVar(value=self.cfg["invert_y"])
+        ttk.Checkbutton(t, text="Reverse up/down (if pointing down moves the cursor up)", variable=self.invy,
+                        command=lambda: self._set("invert_y", self.invy.get())).pack(anchor="w", pady=2)
+        self.invx = tk.BooleanVar(value=self.cfg["invert_x"])
+        ttk.Checkbutton(t, text="Reverse left/right", variable=self.invx,
+                        command=lambda: self._set("invert_x", self.invx.get())).pack(anchor="w", pady=2)
         self.inv = tk.BooleanVar(value=self.cfg["invert_scroll"])
         ttk.Checkbutton(t, text="Invert scroll direction", variable=self.inv,
                         command=lambda: self._set("invert_scroll", self.inv.get())).pack(anchor="w", pady=2)
@@ -138,11 +153,10 @@ class App:
         b = ttk.Frame(t)
         b.pack(fill="x", pady=10)
         ttk.Button(b, text="Calibrate pinch", command=self._calibrate_pinch).pack(side="left")
-        ttk.Button(b, text="Set up motion directions", command=self._axis_wizard).pack(side="left", padx=6)
         ttk.Button(b, text="Reset to defaults", command=self._reset).pack(side="right")
         ttk.Label(t, foreground="#777", wraplength=540,
-                  text="If the cursor goes the wrong way, run “Set up motion directions”. "
-                       "It works for either wrist and any watch orientation.").pack(anchor="w")
+                  text="Movement follows your forearm relative to the room, so it works with your palm "
+                       "down, sideways, or anything in between. Twisting your wrist doesn't move the cursor.").pack(anchor="w")
         return t
 
     def _tab_connection(self, nb):
@@ -238,13 +252,16 @@ class App:
         if not messagebox.askyesno(APP_NAME, "Reset all gesture settings to defaults?"):
             return
         keys = [k for k in DEFAULTS if k.startswith(("cursor", "pinch", "scroll", "flick", "multi"))]
-        keys += ["invert_scroll"]
+        keys += ["invert_scroll", "invert_x", "invert_y"]
         self.cfg.reset(keys)
         self.cfg.save()
         for key, (var, changed) in self.vars.items():
             var.set(float(self.cfg[key]))
             changed()
         self.inv.set(self.cfg["invert_scroll"])
+        self.invx.set(self.cfg["invert_x"])
+        self.invy.set(self.cfg["invert_y"])
+        self.sg.set({"flick": "Flicking up/down", "twist": "Twisting the wrist"}[self.cfg["scroll_gesture"]])
 
     def _firewall(self):
         try:
@@ -318,37 +335,6 @@ class App:
         self._capture("Calibrate pinch",
                       "Rest your arm, then pinch your thumb and index finger together firmly 5 times "
                       "(about one per second).", 6000, done)
-
-    def _axis_wizard(self):
-        steps = [
-            ("cursor_axis_x", "Step 1 of 3\nWhen it says GO, sweep your hand to the RIGHT once (then back)."),
-            ("cursor_axis_y", "Step 2 of 3\nWhen it says GO, tilt your hand DOWN once, bending at the wrist (then back)."),
-            ("scroll_axis", "Step 3 of 3\nWhen it says GO, do one quick wrist FLICK DOWN, the way you want to scroll down."),
-        ]
-        found = {}
-
-        def run(i):
-            if i == len(steps):
-                for k, v in found.items():
-                    self.cfg[k] = v
-                self.cfg.save()
-                messagebox.showinfo(APP_NAME, "Motion directions saved.")
-                return
-            key, prompt = steps[i]
-
-            def done(samples):
-                exclude = found["cursor_axis_x"][0] if key == "cursor_axis_y" else None
-                try:
-                    found[key] = calibrate.axis_from_motion(samples, exclude)
-                except calibrate.CalibrationError as e:
-                    if messagebox.askretrycancel(APP_NAME, str(e)):
-                        run(i)
-                    return
-                run(i + 1)
-
-            self._capture("Set up motion directions", prompt, 2000, done)
-
-        run(0)
 
     # ------------------------------------------------------------- watch
     def _log(self, text):

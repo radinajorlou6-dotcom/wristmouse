@@ -7,7 +7,7 @@ import sys
 import threading
 
 APP_NAME = "WristMouse"
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 
 log = logging.getLogger("wristmouse")
 
@@ -32,24 +32,23 @@ def resource_path(rel: str) -> str:
     return os.path.join(base, rel)
 
 
-# Axis settings are [axis_index, sign]: 0 = watch x, 1 = watch y, 2 = watch z.
 DEFAULTS = {
     "connection": "auto",          # auto | wifi | bluetooth
     "tcp_port": 47320,
     "udp_port": 47321,
-    # cursor (gyro air mouse)
-    "cursor_axis_x": [2, -1],      # rotation that moves the cursor right
-    "cursor_axis_y": [1, 1],       # rotation that moves the cursor down
+    # cursor (air mouse, world-aligned)
     "cursor_gain": 900.0,          # pixels per radian
     "cursor_accel": 0.5,
     "cursor_deadzone": 0.04,       # rad/s
-    "cursor_y_scale": 2.0,         # up/down is boosted: wrists bend less up/down than they sweep sideways
+    "cursor_y_gain": 1.3,          # extra up/down speed: arms swing less up/down than sideways
+    "invert_x": False,
+    "invert_y": False,             # tick if worn with the buttons facing the elbow
     # pinch taps
     "pinch_threshold": 1.6,        # m/s^2 change between two samples
     "pinch_max_gyro": 1.2,         # rad/s; hand must be fairly still for a pinch
     "multi_tap_window_ms": 350,
-    # wrist flick scrolling
-    "scroll_axis": [1, 1],         # rotation that means "flick down"
+    # scrolling
+    "scroll_gesture": "flick",     # flick (quick up/down) | twist (roll the forearm)
     "flick_threshold": 5.0,        # rad/s
     "scroll_notches": 3,
     "invert_scroll": False,
@@ -87,15 +86,6 @@ class Config:
             pass
         except Exception as e:  # corrupt file: keep defaults
             log.warning("Could not read config: %s", e)
-        self.fix_axes()
-
-    def fix_axes(self):
-        """Left/right and up/down must use different rotation axes, or the cursor only moves
-        diagonally (older versions of the setup wizard could save that)."""
-        x, y = self._data["cursor_axis_x"], self._data["cursor_axis_y"]
-        if x[0] == y[0]:
-            dy = DEFAULTS["cursor_axis_y"]
-            self._data["cursor_axis_y"] = list(dy) if dy[0] != x[0] else [next(i for i in range(3) if i != x[0]), 1]
 
     def save(self):
         if not self.persist:

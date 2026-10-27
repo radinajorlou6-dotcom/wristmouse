@@ -12,11 +12,11 @@ The watch app is inside it. Install it from the laptop app's **Install on watch*
 | Do this | Get this |
 |---|---|
 | Turn palm up, hold ~1 s | Pause / resume the mouse (watch buzzes once = on, twice = paused) |
-| Tilt / sweep your hand | Move the cursor |
+| Point / swing your forearm | Move the cursor (works palm-down or sideways, no setup) |
 | Pinch thumb + index finger | Left click |
 | Double pinch | Right click |
 | Triple pinch | Voice typing. Talk, and it types when you stop |
-| Quick wrist flick down / up | Scroll down / up |
+| Quick flick down / up (or wrist twist, if you pick that) | Scroll down / up |
 
 Pause the mouse (palm up) before you put your arm down or pick something up.
 
@@ -40,9 +40,9 @@ The app opens on the watch with all permissions granted. After that it runs in t
 ## Setting it up for your hand
 
 All tuning is on the laptop, under the **Gestures** tab:
-- **Set up motion directions**: three quick motions so the cursor goes the right way for your wrist and watch orientation.
+- Cursor movement follows your forearm relative to the room (gravity-aligned, like a laser pointer), so it doesn't depend on how your wrist is turned. If up/down is backwards (watch worn with the buttons toward your elbow), tick **Reverse up/down**.
 - **Calibrate pinch**: pinch 5 times and it picks the right sensitivity.
-- Sliders for cursor speed, acceleration, flick strength, scroll amount and double-pinch speed.
+- Sliders for cursor speed, up/down speed, acceleration, flick strength, scroll amount and double-pinch speed. You can also scroll by twisting the wrist instead of flicking.
 
 ## Connection notes
 

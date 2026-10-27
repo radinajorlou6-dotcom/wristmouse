@@ -2,24 +2,49 @@
 
 Gestures
     palm up, hold ~1s ........ pause / resume the mouse (the "clutch")
-    tilt / sweep the hand .... move the cursor (gyro air mouse)
+    point / swing the forearm  move the cursor (air mouse)
     single finger pinch ...... left click
     double pinch ............. right click
     triple pinch ............. start voice typing
-    quick wrist flick ........ scroll (down flick = scroll down)
+    quick flick / twist ...... scroll
 
-Units: acceleration in m/s^2, angular velocity in rad/s, time in milliseconds
-(watch clock).
+Cursor model: rotation is measured relative to the real world, not the watch. We track which
+way is "up" inside the watch (gyro-propagated gravity, corrected by the accelerometer), then
+    left/right = turning around the world's vertical axis (yaw)
+    up/down    = raising/lowering the forearm (pitch about the horizontal axis across it)
+    twist      = rolling around the forearm (ignored for the cursor)
+so it works the same whether your palm faces down, sideways or anything in between, on either
+wrist, with no setup.
+
+Movement is applied immediately. When a pinch or flick is recognised a few samples late, the
+cursor movement it caused is undone instead of delaying every movement.
+
+Units: acceleration in m/s^2, angular velocity in rad/s, time in milliseconds (watch clock).
 """
 import collections
 import math
 
-CURSOR_DELAY_MS = 60      # cursor moves are held this long so pinch/flick jitter can be dropped
 PINCH_REFRACTORY_MS = 150
-FLICK_RETURN_MS = 450     # ignore the opposite "return swing" after a flick for this long
+PINCH_UNDO_MS = 60         # cursor motion this long before a pinch is jitter from the tap
+FLICK_UNDO_MS = 140        # ... and before a flick is the flick's own wind-up
+FLICK_RETURN_MS = 450      # ignore the opposite "return swing" after a flick for this long
 FLICK_REPEAT_MS = 150
-PALM_UP_RATIO = -0.7      # gravity z / |g| below this = screen facing the floor
+PALM_UP_RATIO = -0.7       # gravity z / |g| below this = screen facing the floor
 GAP_RESET_MS = 250
+G = 9.81
+FOREARM = (1.0, 0.0, 0.0)  # the watch's x axis runs along the forearm
+
+
+def _dot(a, b):
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
+def _cross(a, b):
+    return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+
+
+def _norm(a):
+    return math.sqrt(_dot(a, a))
 
 
 class Output:
@@ -42,8 +67,8 @@ class Engine:
         self.capture = None
         self.capture_end = 0
         self.capture_cb = None
-        self.live_peak = 0.0        # recent pinch strength, for the settings meter
-        self.pinch_blocked = lambda: False   # hub sets this: True while the watch is vibrating
+        self.live_peak = 0.0                  # recent pinch strength, for the settings meter
+        self.pinch_blocked = lambda: False    # hub sets this: True while the watch is vibrating
         self.reset()
 
     # ------------------------------------------------------------------ state
@@ -60,17 +85,18 @@ class Engine:
         self.flick_until = -1e12
         self.flick_block_same = -1e12
         self.freeze_until = -1e12
-        self.queue = collections.deque()
+        self.history = collections.deque()   # (t, dx, dy) actually applied, for undo
         self.recent_m = collections.deque()
         self.still_since = None
         self._peak_decay_t = None
+        self.rx = self.ry = 0.0              # lightly smoothed rates
 
     def set_active(self, active: bool, t=None):
         if active == self.active:
             return
         self.active = active
         self.taps.clear()
-        self.queue.clear()
+        self.history.clear()
         self.notify("active", active=active)
 
     def start_capture(self, ms: int, callback):
@@ -87,20 +113,16 @@ class Engine:
             self.last_t = t
             self.g = list(a)
             self.prev_a = list(a)
-            self.queue.clear()
+            self.history.clear()
             return
         dt = (t - self.last_t) / 1000.0
         self.last_t = t
 
-        g = self.g
-        k = dt / (0.3 + dt)
-        for i in range(3):
-            g[i] += k * (a[i] - g[i])
+        w = [w_raw[i] - self.bias[i] for i in range(3)]
+        wmag = _norm(w)
+        self._update_gravity(a, w, dt)
         m = math.dist(a, self.prev_a)
         self.prev_a = list(a)
-
-        w = [w_raw[i] - self.bias[i] for i in range(3)]
-        wmag = math.sqrt(w[0] * w[0] + w[1] * w[1] + w[2] * w[2])
         self._update_bias(t, w_raw, wmag)
         self._update_meter(t, m, wmag)
 
@@ -117,8 +139,9 @@ class Engine:
                     cb(samples)
             return
 
+        g = self.g
+        gn = _norm(g) or 1.0
         # ---- clutch: palm up and hold
-        gn = math.sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2]) or 1.0
         if g[2] / gn < PALM_UP_RATIO:
             if self.palm_since is None:
                 self.palm_since = t
@@ -126,7 +149,6 @@ class Engine:
                 self.palm_fired = True
                 self.set_active(not self.active)
             self.taps.clear()
-            self.queue.clear()
             return
         if self.palm_since is not None:
             self.freeze_until = max(self.freeze_until, t + 300)  # turning the hand back over
@@ -136,12 +158,42 @@ class Engine:
         if not self.active:
             return
 
-        self._flick(t, w)
+        up = (g[0] / gn, g[1] / gn, g[2] / gn)
+        yaw, pitch, roll = self._world_rates(w, up)
+        self._flick(t, pitch, roll)
         self._pinch(t, m, wmag)
         self._resolve_taps(t)
-        self._cursor(t, dt, w)
+        self._cursor(t, dt, yaw, pitch)
 
     # ------------------------------------------------------------- internals
+    def _update_gravity(self, a, w, dt):
+        """Gyro-propagated gravity with a slow accelerometer correction (complementary filter).
+        Stays accurate while the arm is moving, unlike a plain low-pass of the accelerometer."""
+        g = self.g
+        # a world-fixed vector seen from the rotating watch: dg/dt = g x w
+        cx = _cross(g, w)
+        for i in range(3):
+            g[i] += cx[i] * dt
+        an = _norm(a)
+        if 0.6 * G < an < 1.4 * G:  # only trust the accelerometer when it's mostly gravity
+            gn = _norm(g) or 1.0
+            agree = _dot(a, g) / (an * gn)
+            tau = 0.6 if agree > 0.5 else 0.08  # way off (e.g. missed rotation): re-sync fast
+            k = dt / (tau + dt)
+            for i in range(3):
+                g[i] += k * (a[i] - g[i])
+
+    @staticmethod
+    def _world_rates(w, up):
+        """yaw: + = turning left (counter-clockwise seen from above)
+        pitch: + = forearm rising; roll: twist around the forearm."""
+        yaw = _dot(w, up)
+        h = _cross(FOREARM, up)           # horizontal axis across the forearm
+        hn = _norm(h)
+        pitch = _dot(w, h) / max(hn, 0.35)
+        roll = _dot(w, FOREARM)
+        return yaw, pitch, roll
+
     def _update_bias(self, t, w_raw, wmag):
         # slowly learn gyro drift while the hand is very still
         if wmag < 0.06:
@@ -160,10 +212,21 @@ class Engine:
             self._peak_decay_t = t
             self.live_peak *= 0.9
 
-    def _flick(self, t, w):
+    def _undo(self, t, ms):
+        """Move the cursor back by whatever was applied in the last `ms` milliseconds."""
+        ux = uy = 0.0
+        while self.history and self.history[-1][0] >= t - ms:
+            _, dx, dy = self.history.pop()
+            ux += dx
+            uy += dy
+        if ux or uy:
+            self.out.move(-ux, -uy)
+        self.history.clear()
+
+    def _flick(self, t, pitch, roll):
         c = self.cfg
-        ax, sign = c["scroll_axis"]
-        v = w[ax] * sign
+        # positive = "scroll down" gesture
+        v = roll if c["scroll_gesture"] == "twist" else -pitch
         thr = c["flick_threshold"]
         if abs(v) >= thr:
             d = 1 if v > 0 else -1
@@ -176,15 +239,14 @@ class Engine:
                     notches = -d * int(c["scroll_notches"])   # flick down -> wheel down
                     if c["invert_scroll"]:
                         notches = -notches
+                    self._undo(t, FLICK_UNDO_MS)
                     self.out.scroll(notches)
                     self.notify("scroll", notches=notches)
                     self.flick_until = t + FLICK_RETURN_MS
                     self.flick_block_same = t + FLICK_REPEAT_MS
                     self.taps.clear()
-                    self.queue.clear()
                     self.freeze_until = max(self.freeze_until, t + FLICK_RETURN_MS)
             self.freeze_until = max(self.freeze_until, t + 150)
-            self.queue.clear()
         elif self.flick_active and abs(v) < thr * 0.5:
             self.flick_active = False
 
@@ -206,9 +268,7 @@ class Engine:
             return  # part of a longer shake, not a crisp tap
         self.last_pinch_t = t
         self.taps.append(t)
-        # throw away the cursor jitter the tap caused
-        while self.queue and self.queue[-1][0] >= t - 80:
-            self.queue.pop()
+        self._undo(t, PINCH_UNDO_MS)  # keep the cursor where you aimed
         self.freeze_until = max(self.freeze_until, t + PINCH_REFRACTORY_MS)
 
     def _resolve_taps(self, t):
@@ -225,34 +285,36 @@ class Engine:
         else:
             self.notify("dictate")
 
-    def _shape(self, v):
+    def _shape(self, v, lim):
         c = self.cfg
-        lim = 0.7 * c["flick_threshold"]
         s = min(abs(v), lim) - c["cursor_deadzone"]
         if s <= 0:
             return 0.0
         return math.copysign(c["cursor_gain"] * s * (1.0 + c["cursor_accel"] * s), v)
 
-    def _cursor(self, t, dt, w):
+    def _cursor(self, t, dt, yaw, pitch):
         c = self.cfg
-        axx, sx = c["cursor_axis_x"]
-        axy, sy = c["cursor_axis_y"]
-        if t >= self.freeze_until:
-            dx = self._shape(w[axx] * sx) * dt
-            dy = self._shape(w[axy] * sy) * dt * c["cursor_y_scale"]
-            if dx or dy:
-                self.queue.append((t, dx, dy))
-        mx = my = 0.0
-        q = self.queue
-        while q and q[0][0] <= t - CURSOR_DELAY_MS:
-            _, qx, qy = q.popleft()
-            mx += qx
-            my += qy
-        if mx or my:
-            self.out.move(mx, my)
+        # very light smoothing (~10 ms) to take the edge off sensor noise
+        self.rx = 0.5 * self.rx + 0.5 * (-yaw)
+        self.ry = 0.5 * self.ry + 0.5 * (-pitch)
+        while self.history and self.history[0][0] < t - 200:
+            self.history.popleft()
+        if t < self.freeze_until:
+            return
+        # in flick mode, vertical speed is capped below the flick threshold so flicks stay flicks
+        ylim = 0.7 * c["flick_threshold"] if c["scroll_gesture"] != "twist" else 12.0
+        dx = self._shape(self.rx, 12.0) * dt
+        dy = self._shape(self.ry, ylim) * dt * c["cursor_y_gain"]
+        if c["invert_x"]:
+            dx = -dx
+        if c["invert_y"]:
+            dy = -dy
+        if dx or dy:
+            self.out.move(dx, dy)
+            self.history.append((t, dx, dy))
 
     def flush(self):
         """Resolve any waiting taps immediately (e.g. when the stream stops)."""
         if self.taps:
             self._resolve_taps(self.taps[-1] + self.cfg["multi_tap_window_ms"] + 1)
-        self.queue.clear()
+        self.history.clear()

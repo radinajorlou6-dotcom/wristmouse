@@ -76,45 +76,6 @@ def test_weak_tap_ignored():
     assert out.of("click") == []
 
 
-def test_flick_scrolls_once_despite_return_swing():
-    cfg, out, eng, ev = make()
-    ax, sign = cfg["scroll_axis"]
-    s = Synth()
-    s.rest(500); s.flick(ax, sign); s.rest(600)
-    s.feed(eng)
-    assert out.of("scroll") == [("scroll", -3)]
-    s.flick(ax, -sign); s.rest(600)   # flick up
-    s.feed(eng)
-    assert out.of("scroll")[-1] == ("scroll", 3)
-    assert out.of("click") == []
-
-
-def test_repeated_flicks_scroll_repeatedly():
-    cfg, out, eng, ev = make()
-    ax, sign = cfg["scroll_axis"]
-    s = Synth()
-    s.rest(300)
-    for _ in range(3):
-        s.flick(ax, sign); s.rest(250)
-    s.rest(500)
-    s.feed(eng)
-    assert out.of("scroll") == [("scroll", -3)] * 3
-
-
-def test_cursor_moves_right_and_down():
-    cfg, out, eng, ev = make()
-    axx, sx = cfg["cursor_axis_x"]
-    axy, sy = cfg["cursor_axis_y"]
-    s = Synth()
-    s.rest(300); s.rotate(axx, 1.0 * sx, 500); s.rest(300)
-    s.feed(eng)
-    assert out.x > 200 and abs(out.y) < 20
-    x0 = out.x
-    s.rotate(axy, 1.0 * sy, 500); s.rest(300)
-    s.feed(eng)
-    assert out.y > 200 and abs(out.x - x0) < 20
-
-
 def test_palm_up_toggles():
     cfg, out, eng, ev = make()
     s = Synth()
@@ -169,30 +130,6 @@ def test_calibrate_pinch():
     assert 0.3 < thr < 2.0
 
 
-def test_calibrate_axes():
-    cfg, out, eng, ev = make()
-    got = []
-    eng.start_capture(2000, got.append)
-    s = Synth()
-    s.rest(200); s.rotate(0, -2.0, 300); s.rotate(0, 2.0, 300); s.rest(1600)
-    s.feed(eng)
-    assert calibrate.axis_from_motion(got[0]) == [0, -1]
-    got.clear()
-    eng.start_capture(2000, got.append)
-    s.rest(100); s.flick(2, 1); s.rest(1800)
-    s.feed(eng)
-    assert calibrate.axis_from_motion(got[0]) == [2, 1]
-
-
-def test_calibrate_no_motion_fails():
-    cfg, out, eng, ev = make()
-    got = []
-    eng.start_capture(2000, got.append)
-    s = Synth(); s.rest(2300); s.feed(eng)
-    with pytest.raises(calibrate.CalibrationError):
-        calibrate.axis_from_motion(got[0])
-
-
 def test_vibration_does_not_trigger_pinch():
     cfg, out, eng, ev = make()
     eng.pinch_blocked = lambda: True
@@ -230,36 +167,105 @@ def test_hub_blocks_pinches_while_vibrating():
     assert out.of("click") == [("click", "left", 1)]
 
 
-def test_axis_wizard_excludes_taken_axis():
+
+
+# face up: yaw = gyro z, -pitch ("down") = gyro y, roll = gyro x
+def test_flick_scrolls_once_despite_return_swing():
     cfg, out, eng, ev = make()
-    got = []
-    eng.start_capture(2000, got.append)
     s = Synth()
-    # mostly axis 2 with some axis 1: without exclusion it would pick 2 again
-    s.rest(200)
-    for _ in range(30):
-        s._sample(w=(0.0, 1.2, 2.0))
-    s.rest(1700)
+    s.rest(500); s.flick(1, 1); s.rest(600)
     s.feed(eng)
-    assert calibrate.axis_from_motion(got[0], exclude=2) == [1, 1]
+    assert out.of("scroll") == [("scroll", -3)]
+    s.flick(1, -1); s.rest(600)   # flick up
+    s.feed(eng)
+    assert out.of("scroll")[-1] == ("scroll", 3)
+    assert out.of("click") == []
 
 
-def test_config_fixes_same_axes(tmp_path):
-    import json
-    p = tmp_path / "c.json"
-    p.write_text(json.dumps({"cursor_axis_x": [1, 1], "cursor_axis_y": [1, -1]}))
-    cfg = Config(str(p))
-    assert cfg["cursor_axis_x"][0] != cfg["cursor_axis_y"][0]
-
-
-def test_up_down_boost():
+def test_flick_windup_is_undone():
     cfg, out, eng, ev = make()
-    axx, sx = cfg["cursor_axis_x"]
-    axy, sy = cfg["cursor_axis_y"]
     s = Synth()
-    s.rest(300); s.rotate(axx, 1.0 * sx, 500); s.rest(300)
+    s.rest(500); s.flick(1, 1); s.rest(600)
+    s.feed(eng)
+    assert abs(out.y) < 15, out.y
+
+
+def test_repeated_flicks_scroll_repeatedly():
+    cfg, out, eng, ev = make()
+    s = Synth()
+    s.rest(300)
+    for _ in range(3):
+        s.flick(1, 1); s.rest(250)
+    s.rest(500)
+    s.feed(eng)
+    assert out.of("scroll") == [("scroll", -3)] * 3
+
+
+def test_cursor_right_and_down_palm_down():
+    cfg, out, eng, ev = make()
+    s = Synth()
+    s.rest(300); s.rotate(2, -1.0, 500); s.rest(300)     # turn right around vertical
+    s.feed(eng)
+    assert out.x > 200 and abs(out.y) < 20
+    x0 = out.x
+    s.rotate(1, 1.0, 300); s.rest(300)                     # point forearm down
+    s.feed(eng)
+    assert out.y > 150 and abs(out.x - x0) < 20
+
+
+def test_cursor_same_with_palm_sideways():
+    """Watch on its side (gravity along watch y): the world-aligned model still maps
+    turning right -> right and pointing down -> down, with no setup."""
+    cfg, out, eng, ev = make()
+    s = Synth()
+    s.base = (0.0, 9.81, 0.0)
+    s.rest(400); s.rotate(1, -1.0, 500); s.rest(300)     # turn right: around watch y (= up)
+    s.feed(eng)
+    assert out.x > 200 and abs(out.y) < 20
+    x0 = out.x
+    s.rotate(2, -1.0, 300); s.rest(300)                    # point down: around watch z now
+    s.feed(eng)
+    assert out.y > 150 and abs(out.x - x0) < 20
+
+
+def test_twist_does_not_move_cursor():
+    cfg, out, eng, ev = make()
+    s = Synth()
+    s.rest(300); s.rotate(0, 2.0, 300); s.rest(300)
+    s.feed(eng)
+    assert abs(out.x) < 5 and abs(out.y) < 5
+
+
+def test_twist_scroll_mode():
+    cfg, out, eng, ev = make()
+    cfg["scroll_gesture"] = "twist"
+    s = Synth()
+    s.rest(300); s.flick(0, 1); s.rest(600)
+    s.feed(eng)
+    assert out.of("scroll") == [("scroll", -3)]
+
+
+def test_cursor_has_no_delay():
+    cfg, out, eng, ev = make()
+    s = Synth()
+    s.rest(300)
+    s.feed(eng)
+    s.rotate(2, -1.0, 30)  # 3 samples
+    s.feed(eng)
+    assert out.x > 0
+
+
+def test_up_down_gain_and_invert():
+    cfg, out, eng, ev = make()
+    s = Synth()
+    s.rest(300); s.rotate(2, -1.0, 300); s.rest(300)
     s.feed(eng)
     x = out.x
-    s.rotate(axy, 1.0 * sy, 500); s.rest(300)
+    s.rotate(1, 1.0, 300); s.rest(300)
     s.feed(eng)
-    assert out.y > 1.8 * x  # same wrist rotation moves further vertically
+    assert out.y > 1.2 * x
+    cfg["invert_y"] = True
+    y = out.y
+    s.rotate(1, 1.0, 300); s.rest(300)
+    s.feed(eng)
+    assert out.y < y

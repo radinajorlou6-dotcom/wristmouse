@@ -40,28 +40,3 @@ def pinch_threshold(samples, max_gyro: float):
     thr = max(1.3 * noise, 0.6 * weakest, 0.3)
     return round(thr, 2), len(real)
 
-
-def axis_from_motion(samples, exclude=None):
-    """Find which gyro axis a deliberate motion used, and its direction.
-
-    `exclude` is an axis that's already taken (the up/down axis must differ from left/right,
-    otherwise the cursor can only move diagonally).
-    Returns [axis_index, sign] where sign makes the *first* big movement positive.
-    """
-    if len(samples) < 30:
-        raise CalibrationError("Not enough data from the watch. Is it connected?")
-    # total rotation energy per axis is steadier than a single peak sample
-    energy = [sum(s[2][i] * s[2][i] for s in samples) for i in range(3)]
-    peaks = [max(abs(s[2][i]) for s in samples) for i in range(3)]
-    axes = [i for i in range(3) if i != exclude]
-    axis = max(axes, key=lambda i: energy[i])
-    if peaks[axis] < 0.8:
-        raise CalibrationError("Didn't detect a clear movement. Try a bigger motion.")
-    others = sorted(energy[i] for i in axes if i != axis)
-    if others and others[-1] > 0.8 * energy[axis]:
-        raise CalibrationError("The movement mixed two directions. Try a cleaner, straighter motion.")
-    for s in samples:
-        v = s[2][axis]
-        if abs(v) >= 0.5 * peaks[axis]:
-            return [axis, 1 if v > 0 else -1]
-    raise CalibrationError("Couldn't read the motion.")

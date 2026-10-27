@@ -11,8 +11,11 @@ class Synth:
         self.dt = 1000.0 / rate
         self.rng = random.Random(seed)
         self.out = []
+        self.base = (0.0, 0.0, G)   # resting accelerometer reading (face up)
 
-    def _sample(self, a=(0.0, 0.0, G), w=(0.0, 0.0, 0.0)):
+    def _sample(self, a=None, w=(0.0, 0.0, 0.0)):
+        if a is None:
+            a = self.base
         n = lambda s: self.rng.gauss(0, s)
         self.out.append((self.t, tuple(x + n(0.03) for x in a), tuple(x + n(0.005) for x in w)))
         self.t += self.dt
@@ -22,8 +25,9 @@ class Synth:
             self._sample()
 
     def pinch(self, strength=3.0):
-        self._sample(a=(0.4, 0.2, G + strength))
-        self._sample(a=(0.0, 0.0, G - strength * 0.3))
+        b = self.base
+        self._sample(a=(b[0] + 0.4, b[1] + 0.2, b[2] + strength))
+        self._sample(a=(b[0], b[1], b[2] - strength * 0.3))
 
     def rotate(self, axis, rad_s, ms):
         for _ in range(int(ms / self.dt)):

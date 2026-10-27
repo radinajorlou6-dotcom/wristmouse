@@ -26,6 +26,8 @@ class Core:
 
     def _run(self):
         asyncio.set_event_loop(self.loop)
+        self.loop.set_exception_handler(
+            lambda loop, ctx: log.error("async error: %s", ctx.get("message"), exc_info=ctx.get("exception")))
         self.loop.run_until_complete(self._main())
 
     async def _main(self):

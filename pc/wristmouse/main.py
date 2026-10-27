@@ -25,6 +25,15 @@ def setup_logging(verbose=False):
     return log
 
 
+def install_crash_logging(log):
+    """The windowed exe has no console, so send every uncaught error to the log file."""
+    import threading
+
+    sys.excepthook = lambda t, v, tb: log.error("uncaught error", exc_info=(t, v, tb))
+    threading.excepthook = lambda a: log.error("thread %s crashed", a.thread and a.thread.name,
+                                               exc_info=(a.exc_type, a.exc_value, a.exc_traceback))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog=APP_NAME)
     ap.add_argument("--headless", action="store_true", help="no window (for testing)")
@@ -36,6 +45,7 @@ def main(argv=None):
     ap.add_argument("-v", action="store_true")
     args = ap.parse_args(argv)
     log = setup_logging(args.v)
+    install_crash_logging(log)
     log.info("%s %s starting", APP_NAME, VERSION)
 
     if args.selftest is not None:

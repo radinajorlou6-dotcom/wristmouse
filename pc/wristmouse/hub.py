@@ -43,6 +43,8 @@ class Hub:
         self._rate_n = 0
         self._last_ping = 0.0
         self.vib_until = 0.0
+        self._feed_errors = 0
+        self._last_stats = time.monotonic()
         self.engine.pinch_blocked = lambda: time.monotonic() < self.vib_until
 
     # ---------------------------------------------------------------- links
@@ -116,7 +118,13 @@ class Hub:
                 return
             self.samples += 1
             self._rate_n += 1
-            self.engine.feed(t, a, w)
+            try:
+                self.engine.feed(t, a, w)
+            except Exception:
+                self._feed_errors += 1
+                if self._feed_errors <= 5 or self._feed_errors % 1000 == 0:
+                    log.exception("gesture engine error #%d (line %r)", self._feed_errors, line)
+                self.engine.reset()
         elif line.startswith("a "):
             self.voice.on_audio(line[2:])
         elif line == "ae":
@@ -150,6 +158,13 @@ class Hub:
             self.rate = self._rate_n / (now - self._rate_t)
             self._rate_n = 0
             self._rate_t = now
+        if now - self._last_stats >= 30.0:
+            self._last_stats = now
+            if self.links:
+                e = self.engine
+                log.info("stats: via=%s rate=%.0f/s active=%s gravity=%s errors=%d",
+                         self.connection_label(), self.rate, e.active,
+                         [round(x, 1) for x in (e.g or [])], self._feed_errors)
         if now - self._last_ping >= 2.0:
             self._last_ping = now
             for l in list(self.links):

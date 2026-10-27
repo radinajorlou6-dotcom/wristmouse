@@ -1,5 +1,6 @@
 """Mouse and keyboard output. WinOutput drives Windows; DryOutput just records (tests / other OSes)."""
 import logging
+import math
 import sys
 import time
 
@@ -119,6 +120,10 @@ class WinOutput(Output):
     # --------------------------------------------------------------- output
     def move(self, dx, dy):
         # SetCursorPos bypasses Windows pointer acceleration, so motion is predictable
+        if not (math.isfinite(dx) and math.isfinite(dy)):
+            return
+        dx = max(-800.0, min(800.0, dx))
+        dy = max(-800.0, min(800.0, dy))
         self.rx += dx
         self.ry += dy
         ix, iy = int(self.rx), int(self.ry)

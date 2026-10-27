@@ -118,6 +118,8 @@ class Engine:
         dt = (t - self.last_t) / 1000.0
         self.last_t = t
 
+        if not all(math.isfinite(x) for x in a) or not all(math.isfinite(x) for x in w_raw):
+            return
         w = [w_raw[i] - self.bias[i] for i in range(3)]
         wmag = _norm(w)
         self._update_gravity(a, w, dt)
@@ -182,6 +184,13 @@ class Engine:
             k = dt / (tau + dt)
             for i in range(3):
                 g[i] += k * (a[i] - g[i])
+        # keep the estimate sane no matter what the sensors do
+        gn = _norm(g)
+        if not math.isfinite(gn) or gn < 1e-6:
+            self.g = list(a) if _norm(a) > 1e-6 else [0.0, 0.0, G]
+        elif gn > 1.5 * G:
+            for i in range(3):
+                g[i] *= 1.5 * G / gn
 
     @staticmethod
     def _world_rates(w, up):
@@ -309,6 +318,9 @@ class Engine:
             dx = -dx
         if c["invert_y"]:
             dy = -dy
+        if not (math.isfinite(dx) and math.isfinite(dy)):
+            self.rx = self.ry = 0.0
+            return
         if dx or dy:
             self.out.move(dx, dy)
             self.history.append((t, dx, dy))

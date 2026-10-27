@@ -1,4 +1,5 @@
 """The WristMouse window (tkinter)."""
+import logging
 import queue
 import threading
 import tkinter as tk
@@ -55,6 +56,8 @@ class App:
         except tk.TclError:
             pass
         self.vars = {}
+        log = logging.getLogger("wristmouse")
+        self.root.report_callback_exception = lambda t, v, tb: log.error("window error", exc_info=(t, v, tb))
         self._build()
         self.root.after(150, self._refresh)
         self.root.protocol("WM_DELETE_WINDOW", self._close)

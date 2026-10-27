@@ -118,6 +118,8 @@ class App:
     def _tab_gestures(self, nb):
         t = ttk.Frame(nb, padding=10)
         self._slider(t, "Cursor speed", "cursor_gain", 200, 3000, "{:.0f}")
+        self._slider(t, "Up/down speed boost", "cursor_y_scale", 0.5, 5, "{:.1f}×",
+                     help_text="Raise this if reaching the top/bottom of the screen takes too much wrist movement.")
         self._slider(t, "Cursor acceleration", "cursor_accel", 0, 2)
         self._slider(t, "Pinch threshold", "pinch_threshold", 0.3, 6,
                      help_text="Lower = more sensitive. Use “Calibrate pinch” to set it automatically.")

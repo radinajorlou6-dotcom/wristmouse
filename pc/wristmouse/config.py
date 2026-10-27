@@ -7,7 +7,7 @@ import sys
 import threading
 
 APP_NAME = "WristMouse"
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 log = logging.getLogger("wristmouse")
 
@@ -43,6 +43,7 @@ DEFAULTS = {
     "cursor_gain": 900.0,          # pixels per radian
     "cursor_accel": 0.5,
     "cursor_deadzone": 0.04,       # rad/s
+    "cursor_y_scale": 2.0,         # up/down is boosted: wrists bend less up/down than they sweep sideways
     # pinch taps
     "pinch_threshold": 1.6,        # m/s^2 change between two samples
     "pinch_max_gyro": 1.2,         # rad/s; hand must be fairly still for a pinch

@@ -239,7 +239,7 @@ class Engine:
         axy, sy = c["cursor_axis_y"]
         if t >= self.freeze_until:
             dx = self._shape(w[axx] * sx) * dt
-            dy = self._shape(w[axy] * sy) * dt
+            dy = self._shape(w[axy] * sy) * dt * c["cursor_y_scale"]
             if dx or dy:
                 self.queue.append((t, dx, dy))
         mx = my = 0.0

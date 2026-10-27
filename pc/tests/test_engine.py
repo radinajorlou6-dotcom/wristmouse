@@ -250,3 +250,16 @@ def test_config_fixes_same_axes(tmp_path):
     p.write_text(json.dumps({"cursor_axis_x": [1, 1], "cursor_axis_y": [1, -1]}))
     cfg = Config(str(p))
     assert cfg["cursor_axis_x"][0] != cfg["cursor_axis_y"][0]
+
+
+def test_up_down_boost():
+    cfg, out, eng, ev = make()
+    axx, sx = cfg["cursor_axis_x"]
+    axy, sy = cfg["cursor_axis_y"]
+    s = Synth()
+    s.rest(300); s.rotate(axx, 1.0 * sx, 500); s.rest(300)
+    s.feed(eng)
+    x = out.x
+    s.rotate(axy, 1.0 * sy, 500); s.rest(300)
+    s.feed(eng)
+    assert out.y > 1.8 * x  # same wrist rotation moves further vertically

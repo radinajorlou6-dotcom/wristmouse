@@ -221,6 +221,14 @@ class Engine:
             self._peak_decay_t = t
             self.live_peak *= 0.9
 
+    def _move(self, t, dx, dy):
+        """Outputs that can smooth playback get the watch timestamp too."""
+        mv = getattr(self.out, "move_at", None)
+        if mv is not None:
+            mv(t, dx, dy)
+        else:
+            self.out.move(dx, dy)
+
     def _undo(self, t, ms):
         """Move the cursor back by whatever was applied in the last `ms` milliseconds."""
         ux = uy = 0.0
@@ -229,7 +237,7 @@ class Engine:
             ux += dx
             uy += dy
         if ux or uy:
-            self.out.move(-ux, -uy)
+            self._move(t, -ux, -uy)
         self.history.clear()
 
     def _flick(self, t, pitch, roll):
@@ -322,7 +330,7 @@ class Engine:
             self.rx = self.ry = 0.0
             return
         if dx or dy:
-            self.out.move(dx, dy)
+            self._move(t, dx, dy)
             self.history.append((t, dx, dy))
 
     def flush(self):

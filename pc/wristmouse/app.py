@@ -156,6 +156,7 @@ class App:
         b = ttk.Frame(t)
         b.pack(fill="x", pady=10)
         ttk.Button(b, text="Calibrate pinch", command=self._calibrate_pinch).pack(side="left")
+        ttk.Button(b, text="Save motion recording", command=self._save_recording).pack(side="left", padx=6)
         ttk.Button(b, text="Reset to defaults", command=self._reset).pack(side="right")
         ttk.Label(t, foreground="#777", wraplength=540,
                   text="Movement follows your forearm relative to the room, so it works with your palm "
@@ -265,6 +266,18 @@ class App:
         self.invx.set(self.cfg["invert_x"])
         self.invy.set(self.cfg["invert_y"])
         self.sg.set({"flick": "Flicking up/down", "twist": "Twisting the wrist"}[self.cfg["scroll_gesture"]])
+
+    def _save_recording(self):
+        import datetime
+        import os
+
+        from .config import app_dir
+
+        d = os.path.join(app_dir(), "recordings")
+        os.makedirs(d, exist_ok=True)
+        path = os.path.join(d, "motion-%s.txt" % datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
+        n = self.core.hub.save_recording(path)
+        messagebox.showinfo(APP_NAME, "Saved the last %d motion samples (~%d s) to:\n%s" % (n, n // 100, path))
 
     def _firewall(self):
         try:

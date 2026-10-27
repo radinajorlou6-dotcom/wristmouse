@@ -7,7 +7,7 @@ import sys
 import threading
 
 APP_NAME = "WristMouse"
-VERSION = "1.3.2"
+VERSION = "1.4.0"
 
 log = logging.getLogger("wristmouse")
 

@@ -44,6 +44,7 @@ class Hub:
         self._last_ping = 0.0
         self.vib_until = 0.0
         self._feed_errors = 0
+        self.recording = collections.deque(maxlen=12000)   # last ~2 min of raw motion
         self._last_stats = time.monotonic()
         self.engine.pinch_blocked = lambda: time.monotonic() < self.vib_until
 
@@ -118,6 +119,7 @@ class Hub:
                 return
             self.samples += 1
             self._rate_n += 1
+            self.recording.append((time.monotonic(), line))
             try:
                 self.engine.feed(t, a, w)
             except Exception:
@@ -187,3 +189,12 @@ class Hub:
             done(res, None)
 
         loop.create_task(runner())
+
+    def save_recording(self, path):
+        """Write the last ~2 minutes of raw motion (with arrival times) for tuning."""
+        rows = list(self.recording)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("# pc_ms watch_ms ax ay az gx gy gz (mm/s^2, mrad/s)\n")
+            for pc, line in rows:
+                f.write("%d %s\n" % (pc * 1000, line[2:]))
+        return len(rows)

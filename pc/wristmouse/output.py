@@ -1,7 +1,9 @@
 """Mouse and keyboard output. WinOutput drives Windows; DryOutput just records (tests / other OSes)."""
+import collections
 import logging
 import math
 import sys
+import threading
 import time
 
 from .engine import Output
@@ -172,7 +174,82 @@ class WinOutput(Output):
             self._send(batch)
 
 
+class SmoothMover:
+    """Wraps an output and replays cursor movement on the watch's own clock.
+
+    Wi-Fi (and BLE) deliver motion in bursts: the watch's radio batches packets to save power,
+    so ten samples can land at once and then nothing for 100 ms. Applying each one on arrival
+    makes the cursor jump. Instead every movement is scheduled at
+        watch_time + clock_offset + jitter_delay
+    and a 250 Hz thread plays them back, so the cursor moves at an even pace. The delay adapts to
+    how bursty the link actually is (typically 20-60 ms)."""
+
+    def __init__(self, out, min_delay=8.0, max_delay=120.0):
+        self.out = out
+        self.min_delay = min_delay
+        self.max_delay = max_delay
+        self.q = collections.deque()
+        self.lock = threading.Lock()
+        self.offset = None          # pc_ms - watch_ms for the fastest-arriving samples
+        self.late = collections.deque(maxlen=300)
+        self.delay = 30.0
+        self._n = 0
+        self._last_t = None
+        threading.Thread(target=self._run, name="wm-mover", daemon=True).start()
+
+    # pass everything else straight through
+    def __getattr__(self, name):
+        if name == "out":
+            raise AttributeError(name)
+        return getattr(self.out, name)
+
+    def move(self, dx, dy):
+        with self.lock:
+            self.q.append((0.0, dx, dy))
+
+    def move_at(self, t_watch, dx, dy):
+        now = time.monotonic() * 1000.0
+        with self.lock:
+            if self._last_t is not None and abs(t_watch - self._last_t) > 2000:
+                self.offset = None  # watch clock jumped (reconnect / different watch)
+            self._last_t = t_watch
+            cand = now - t_watch
+            if self.offset is None or cand < self.offset:
+                self.offset = cand
+            else:
+                self.offset += 0.001 * (cand - self.offset)  # follow slow clock drift
+            self.late.append(cand - self.offset)
+            self._n += 1
+            if self._n % 50 == 0:
+                srt = sorted(self.late)
+                p95 = srt[int(0.95 * (len(srt) - 1))]
+                self.delay = max(self.min_delay, min(self.max_delay, p95 + 5.0))
+            self.q.append((t_watch + self.offset + self.delay, dx, dy))
+
+    def _run(self):
+        while True:
+            time.sleep(0.004)
+            now = time.monotonic() * 1000.0
+            mx = my = 0.0
+            with self.lock:
+                q = self.q
+                while q and q[0][0] <= now:
+                    _, dx, dy = q.popleft()
+                    mx += dx
+                    my += dy
+                if len(q) > 400:  # never let it fall far behind
+                    while q:
+                        _, dx, dy = q.popleft()
+                        mx += dx
+                        my += dy
+            if mx or my:
+                try:
+                    self.out.move(mx, my)
+                except Exception:
+                    log.exception("cursor move failed")
+
+
 def make_output(dry: bool = False) -> Output:
     if dry or sys.platform != "win32":
         return DryOutput()
-    return WinOutput()
+    return SmoothMover(WinOutput())

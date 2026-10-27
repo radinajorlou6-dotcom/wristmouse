@@ -62,6 +62,8 @@ class BleLink(
     private var inFlight = false
     private var inFlightSince = 0L
     private var retry: ByteArray? = null
+    private var failSince = 0L
+    @Volatile private var resetting = false
     private val rx = StringBuilder()
 
     fun isUp(): Boolean = device != null && subscribed
@@ -196,6 +198,10 @@ class BleLink(
                 Status.ble = "Bluetooth: connecting…"
                 main.post { stopAdvertising() }
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                val stillConnected = try {
+                    bm.getConnectedDevices(BluetoothProfile.GATT_SERVER).any { it.address == dev.address }
+                } catch (_: Exception) { false }
+                if (stillConnected) return // late event from an old connection; the new one is fine
                 if (device == null || device?.address == dev.address) {
                     device = null
                     subscribed = false
@@ -220,6 +226,7 @@ class BleLink(
                 device = dev
                 subscribed = on
                 if (on) {
+                    synchronized(lock) { q.clear(); headOff = 0; queued = 0; inFlight = false; retry = null; failSince = 0 }
                     Status.ble = "Bluetooth: connected"
                     onConnected()
                 }
@@ -274,7 +281,10 @@ class BleLink(
         }
 
         override fun onNotificationSent(dev: BluetoothDevice, status: Int) {
-            synchronized(lock) { inFlight = false }
+            synchronized(lock) {
+                inFlight = false
+                if (status == BluetoothGatt.GATT_SUCCESS) failSince = 0 else noteFailure()
+            }
             pump()
         }
     }
@@ -312,9 +322,11 @@ class BleLink(
         val s = server ?: return
         val ch = txChar ?: return
         if (!subscribed) return
+        if (resetting) return
         val chunk: ByteArray = synchronized(lock) {
             val now = SystemClock.elapsedRealtime()
             if (inFlight && now - inFlightSince < 1000) return
+            if (inFlight) noteFailure() // the last notification never completed
             val r = retry
             retry = null
             val c = r ?: takeChunk(maxOf(20, minOf(mtu - 3, 509))) ?: return
@@ -333,8 +345,37 @@ class BleLink(
             false
         }
         if (!ok) {
-            synchronized(lock) { inFlight = false; retry = chunk }
+            synchronized(lock) { inFlight = false; retry = chunk; noteFailure() }
             main.postDelayed({ pump() }, 15)
         }
+    }
+
+    /** Called with [lock] held. If sending has failed continuously for 3 s, rebuild everything. */
+    private fun noteFailure() {
+        val now = SystemClock.elapsedRealtime()
+        if (failSince == 0L) {
+            failSince = now
+        } else if (now - failSince > 3000 && !resetting) {
+            resetting = true
+            main.post { resetServer() }
+        }
+    }
+
+    /** Tear down and recreate the GATT server + advertising (fixes a wedged Bluetooth stack). */
+    private fun resetServer() {
+        Log.w(WristService.TAG, "BLE stuck, resetting GATT server")
+        Status.ble = "Bluetooth: resetting…"
+        stopAdvertising()
+        val old = server
+        server = null
+        device?.let { d -> try { old?.cancelConnection(d) } catch (_: Exception) {} }
+        try { old?.close() } catch (_: Exception) {}
+        device = null
+        subscribed = false
+        synchronized(lock) { q.clear(); headOff = 0; queued = 0; inFlight = false; retry = null; failSince = 0 }
+        main.postDelayed({
+            resetting = false
+            trySetup()
+        }, 1500)
     }
 }

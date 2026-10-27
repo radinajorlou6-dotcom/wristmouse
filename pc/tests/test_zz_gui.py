@@ -1,4 +1,7 @@
-"""Builds the real window (only where tkinter + a display exist, e.g. the Windows CI runner)."""
+"""Builds the real window (only where tkinter + a display exist, e.g. the Windows CI runner).
+Named zz so it runs last: Tk objects must be freed on the main thread, otherwise their cleanup
+can stall other threads."""
+import gc
 import os
 import sys
 
@@ -31,3 +34,6 @@ def test_window_builds_and_refreshes():
     app.root.update()
     assert "Waiting" in app.conn_lbl.cget("text")
     app.root.destroy()
+    app.vars.clear()
+    del app
+    gc.collect()

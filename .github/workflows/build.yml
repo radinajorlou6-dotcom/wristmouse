@@ -13,18 +13,39 @@ jobs:
     name: Watch app (.apk)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
-      - uses: android-actions/setup-android@v3
+      - name: Android SDK
+        run: |
+          if [ -z "$ANDROID_HOME" ] || [ ! -d "$ANDROID_HOME" ]; then
+            export ANDROID_HOME="$HOME/android-sdk"
+            mkdir -p "$ANDROID_HOME/cmdline-tools"
+            curl -sSLo /tmp/clt.zip https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip
+            unzip -q /tmp/clt.zip -d "$ANDROID_HOME/cmdline-tools"
+            mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
+            echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          fi
+          SDKM=$(ls -d "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager | sort | tail -1)
+          echo "Using $SDKM"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" "platforms;android-35" "build-tools;35.0.0" "platform-tools" > /dev/null
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.11.1"
       - name: Build
         working-directory: watch
-        run: gradle assembleRelease --no-daemon --stacktrace
+        run: |
+          set -o pipefail
+          gradle assembleRelease --no-daemon --stacktrace 2>&1 | tee build.log
+      - name: Report build errors
+        if: failure()
+        working-directory: watch
+        run: |
+          msg=$(grep -E "^e: |What went wrong|error:|Could not|Exception" -A4 build.log | head -60 | sed ':a;N;$!ba;s/%/%25/g;s/\n/%0A/g')
+          echo "::error title=watch build::$msg"
       - name: Collect
         run: cp watch/app/build/outputs/apk/release/app-release.apk WristMouse-watch.apk
       - uses: actions/upload-artifact@v4
@@ -40,8 +61,8 @@ jobs:
       run:
         working-directory: pc
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - uses: actions/download-artifact@v4
@@ -49,22 +70,44 @@ jobs:
           name: watch-apk
           path: pc/bundle
       - name: Install dependencies
-        run: pip install -r requirements.txt pyinstaller pytest
+        shell: bash
+        run: |
+          set -o pipefail
+          pip install -r requirements.txt pyinstaller pytest 2>&1 | tee pip.log
       - name: Tests
-        run: python -m pytest -q tests
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m pytest -q tests 2>&1 | tee test.log
       - name: Package
-        run: >
-          pyinstaller --noconfirm --clean --windowed --name WristMouse
-          --add-data "bundle/WristMouse-watch.apk;bundle"
-          --collect-all faster_whisper --collect-all ctranslate2 --collect-all bleak
-          --collect-all winrt --collect-submodules winrt
-          run.py
+        shell: bash
+        run: |
+          set -o pipefail
+          pyinstaller --noconfirm --clean --windowed --name WristMouse \
+            --add-data "bundle/WristMouse-watch.apk;bundle" \
+            --collect-all faster_whisper --collect-all ctranslate2 --collect-all bleak \
+            --collect-all winrt --collect-submodules winrt \
+            run.py 2>&1 | tee package.log
+      - name: Report errors
+        if: failure()
+        shell: bash
+        run: |
+          for f in pip.log test.log package.log; do
+            [ -f "$f" ] || continue
+            msg=$(tail -60 "$f" | sed ':a;N;$!ba;s/%/%25/g;s/\n/%0A/g')
+            echo "::error title=$f::$msg"
+          done
       - name: Self-test the packaged app (incl. speech model)
         shell: pwsh
         run: |
           $p = Start-Process -FilePath "dist\WristMouse\WristMouse.exe" -ArgumentList "--selftest","tiny.en" -Wait -PassThru
-          Get-Content "$env:APPDATA\WristMouse\log.txt"
-          if ($p.ExitCode -ne 0) { throw "selftest failed ($($p.ExitCode))" }
+          $log = Get-Content "$env:APPDATA\WristMouse\log.txt" -Raw
+          Write-Output $log
+          if ($p.ExitCode -ne 0) {
+            $m = ($log -split "`n" | Select-Object -Last 40) -join "%0A"
+            Write-Output "::error title=selftest::$m"
+            throw "selftest failed ($($p.ExitCode))"
+          }
       - name: Zip
         shell: pwsh
         run: |

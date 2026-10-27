@@ -106,7 +106,8 @@ def test_gestures_and_voice_over_tcp():
     assert wait(lambda: out.of("click") == [("click", "left", 1)])
     assert wait(lambda: any(r.startswith("vib") for r in received))
 
-    # triple pinch -> pc asks the watch to start the mic
+    # triple pinch -> pc asks the watch to start the mic (after the click's buzz is over)
+    time.sleep(0.6)
     s.rest(200)
     for _ in range(3):
         s.pinch(); s.rest(200)

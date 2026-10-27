@@ -7,7 +7,7 @@ import sys
 import threading
 
 APP_NAME = "WristMouse"
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 log = logging.getLogger("wristmouse")
 
@@ -86,6 +86,15 @@ class Config:
             pass
         except Exception as e:  # corrupt file: keep defaults
             log.warning("Could not read config: %s", e)
+        self.fix_axes()
+
+    def fix_axes(self):
+        """Left/right and up/down must use different rotation axes, or the cursor only moves
+        diagonally (older versions of the setup wizard could save that)."""
+        x, y = self._data["cursor_axis_x"], self._data["cursor_axis_y"]
+        if x[0] == y[0]:
+            dy = DEFAULTS["cursor_axis_y"]
+            self._data["cursor_axis_y"] = list(dy) if dy[0] != x[0] else [next(i for i in range(3) if i != x[0]), 1]
 
     def save(self):
         if not self.persist:

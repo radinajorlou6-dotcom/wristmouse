@@ -43,6 +43,7 @@ class Engine:
         self.capture_end = 0
         self.capture_cb = None
         self.live_peak = 0.0        # recent pinch strength, for the settings meter
+        self.pinch_blocked = lambda: False   # hub sets this: True while the watch is vibrating
         self.reset()
 
     # ------------------------------------------------------------------ state
@@ -196,6 +197,8 @@ class Engine:
             rm.popleft()
         if m < thr or wmag > c["pinch_max_gyro"]:
             return
+        if self.pinch_blocked():
+            return  # the watch's own vibration shakes the accelerometer
         if t - self.last_pinch_t < PINCH_REFRACTORY_MS or t < self.flick_until:
             return
         prior = max((mm for tt, mm in rm if t - 140 <= tt <= t - 40), default=0.0)

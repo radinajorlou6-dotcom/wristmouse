@@ -191,3 +191,62 @@ def test_calibrate_no_motion_fails():
     s = Synth(); s.rest(2300); s.feed(eng)
     with pytest.raises(calibrate.CalibrationError):
         calibrate.axis_from_motion(got[0])
+
+
+def test_vibration_does_not_trigger_pinch():
+    cfg, out, eng, ev = make()
+    eng.pinch_blocked = lambda: True
+    s = Synth()
+    s.rest(500); s.pinch(); s.rest(800)
+    s.feed(eng)
+    assert out.of("click") == []
+
+
+def test_hub_blocks_pinches_while_vibrating():
+    from wristmouse.hub import Hub
+
+    cfg = Config(persist=False)
+    out = DryOutput()
+    hub = Hub(cfg, out)
+
+    class L:
+        kind = "test"
+        sent = []
+        def send(self, line):
+            self.sent.append(line)
+
+    link = L()
+    hub.link_up(link)
+    s = Synth()
+    s.rest(500); s.pinch(); s.rest(500)
+    for line in s.lines():
+        hub.on_line(link, line)
+    assert out.of("click") == [("click", "left", 1)]
+    assert any(x.startswith("vib") for x in link.sent)
+    # the buzz arrives right after the click: it must not count as another pinch
+    s.pinch(4.0); s.rest(500)
+    for line in s.lines():
+        hub.on_line(link, line)
+    assert out.of("click") == [("click", "left", 1)]
+
+
+def test_axis_wizard_excludes_taken_axis():
+    cfg, out, eng, ev = make()
+    got = []
+    eng.start_capture(2000, got.append)
+    s = Synth()
+    # mostly axis 2 with some axis 1: without exclusion it would pick 2 again
+    s.rest(200)
+    for _ in range(30):
+        s._sample(w=(0.0, 1.2, 2.0))
+    s.rest(1700)
+    s.feed(eng)
+    assert calibrate.axis_from_motion(got[0], exclude=2) == [1, 1]
+
+
+def test_config_fixes_same_axes(tmp_path):
+    import json
+    p = tmp_path / "c.json"
+    p.write_text(json.dumps({"cursor_axis_x": [1, 1], "cursor_axis_y": [1, -1]}))
+    cfg = Config(str(p))
+    assert cfg["cursor_axis_x"][0] != cfg["cursor_axis_y"][0]

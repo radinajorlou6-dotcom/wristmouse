@@ -335,8 +335,9 @@ class App:
             key, prompt = steps[i]
 
             def done(samples):
+                exclude = found["cursor_axis_x"][0] if key == "cursor_axis_y" else None
                 try:
-                    found[key] = calibrate.axis_from_motion(samples)
+                    found[key] = calibrate.axis_from_motion(samples, exclude)
                 except calibrate.CalibrationError as e:
                     if messagebox.askretrycancel(APP_NAME, str(e)):
                         run(i)

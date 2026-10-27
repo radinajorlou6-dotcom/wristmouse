@@ -42,6 +42,8 @@ class Hub:
         self._rate_t = time.monotonic()
         self._rate_n = 0
         self._last_ping = 0.0
+        self.vib_until = 0.0
+        self.engine.pinch_blocked = lambda: time.monotonic() < self.vib_until
 
     # ---------------------------------------------------------------- links
     def link_up(self, link):
@@ -79,7 +81,11 @@ class Hub:
                 log.debug("send failed: %s", e)
 
     def haptic(self, *pattern_ms):
-        if self.cfg["haptics"]:
+        if self.cfg["haptics"] and self.links:
+            # ignore pinches until the buzz is over (plus margin for Bluetooth/Wi-Fi delay),
+            # otherwise the vibration itself looks like a pinch and clicks loop forever
+            dur = sum(int(x) for x in pattern_ms) / 1000.0
+            self.vib_until = max(self.vib_until, time.monotonic() + dur + 0.45)
             self.send("vib " + ",".join(str(int(x)) for x in pattern_ms))
 
     def watch_msg(self, text: str):

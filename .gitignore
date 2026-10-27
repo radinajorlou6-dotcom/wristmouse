@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+pc/build/
+pc/dist/
+pc/bundle/
+*.spec
+watch/.gradle/
+watch/build/
+watch/app/build/
+watch/local.properties
+.idea/
+*.iml

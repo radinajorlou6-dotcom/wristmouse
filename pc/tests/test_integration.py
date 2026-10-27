@@ -81,7 +81,15 @@ def test_beacon_discovery():
 
 def test_gestures_and_voice_over_tcp():
     cfg, out, core, tr = start_core("Hello world.")
-    sock = socket.create_connection(("127.0.0.1", cfg["tcp_port"]), timeout=5)
+    assert wait(lambda: core.wifi is not None and core.wifi.status.startswith("listening")), core.wifi and core.wifi.status
+    sock = None
+    for _ in range(50):
+        try:
+            sock = socket.create_connection(("127.0.0.1", cfg["tcp_port"]), timeout=5)
+            break
+        except ConnectionRefusedError:
+            time.sleep(0.1)
+    assert sock is not None
     f = sock.makefile("rwb", buffering=0)
     received = []
 

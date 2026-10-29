@@ -58,6 +58,7 @@ def test_two_separate_pinches_two_left_clicks():
 
 def test_triple_pinch_dictate():
     cfg, out, eng, ev = make()
+    cfg["voice_trigger"] = "triple"
     s = Synth()
     s.rest(500)
     for _ in range(3):
@@ -269,3 +270,104 @@ def test_up_down_gain_and_invert():
     s.rotate(1, 1.0, 300); s.rest(300)
     s.feed(eng)
     assert out.y < y
+
+
+RAISED = (8.6, 0.8, 3.0)       # forearm up, screen facing you (watch at your mouth)
+POINTING = (7.0, -3.3, 5.8)    # real reading while using the air mouse
+HANGING = (-9.4, 0.5, 2.0)     # arm hanging down by your side
+
+
+def test_raise_to_mouth_starts_and_lowering_stops_voice():
+    cfg, out, eng, ev = make()
+    s = Synth()
+    s.rest(500)
+    s.move_to(RAISED)
+    s.rest(1000)
+    s.feed(eng)
+    assert [e for e, _ in ev].count("dictate") == 1
+    s.move_to((0.0, 0.0, 9.81))
+    s.rest(600)
+    s.feed(eng)
+    assert ("lowered", {}) in ev
+    assert out.of("click") == []
+
+
+def test_pointing_or_hanging_arm_does_not_start_voice():
+    for pose in (POINTING, HANGING):
+        cfg, out, eng, ev = make()
+        s = Synth()
+        s.rest(300)
+        s.move_to(pose)
+        s.rest(3000)
+        s.feed(eng)
+        assert "dictate" not in [e for e, _ in ev], pose
+
+
+def test_raise_undoes_cursor_and_scroll_from_lifting_arm():
+    cfg, out, eng, ev = make()
+    s = Synth()
+    s.rest(500)
+    s.rotate(2, -1.5, 300)        # cursor sweeps right while lifting
+    s.flick(1, -1)                 # lifting fast looks like a flick up
+    s.move_to(RAISED)
+    s.rest(1000)
+    s.feed(eng)
+    assert "dictate" in [e for e, _ in ev]
+    assert abs(out.x) < 10, out.x
+    assert sum(a[1] for a in out.of("scroll")) == 0
+
+
+def test_short_raise_does_nothing():
+    cfg, out, eng, ev = make()
+    s = Synth()
+    s.rest(300)
+    s.move_to(RAISED)
+    s.rest(250)
+    s.move_to((0.0, 0.0, 9.81))
+    s.rest(800)
+    s.feed(eng)
+    assert "dictate" not in [e for e, _ in ev]
+    assert "lowered" not in [e for e, _ in ev]
+
+
+def test_triple_pinch_is_right_click_in_raise_mode():
+    cfg, out, eng, ev = make()
+    s = Synth()
+    s.rest(500)
+    for _ in range(3):
+        s.pinch(); s.rest(200)
+    s.rest(800)
+    s.feed(eng)
+    assert out.of("click") == [("click", "right", 1)]
+    assert "dictate" not in [e for e, _ in ev]
+
+
+def test_raise_disabled_in_triple_mode():
+    cfg, out, eng, ev = make()
+    cfg["voice_trigger"] = "triple"
+    s = Synth()
+    s.rest(300); s.move_to(RAISED); s.rest(1500)
+    s.feed(eng)
+    assert "dictate" not in [e for e, _ in ev]
+
+
+def test_overlay_events_from_hub():
+    from wristmouse.hub import Hub
+
+    cfg = Config(persist=False)
+    cfg["haptics"] = False
+    hub = Hub(cfg, DryOutput())
+    s = Synth()
+    s.rest(500); s.pinch(); s.rest(600)
+
+    class L:
+        kind = "t"
+        def send(self, line):
+            pass
+
+    link = L()
+    hub.link_up(link)
+    for line in s.lines():
+        hub.on_line(link, line)
+    kind, text, sticky = hub.overlay.get_nowait()
+    assert (kind, text, sticky) == ("left", "Left click", False)

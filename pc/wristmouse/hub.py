@@ -17,6 +17,7 @@ Protocol (UTF-8 lines):
 import asyncio
 import collections
 import logging
+import queue
 import time
 
 from .engine import Engine
@@ -36,6 +37,7 @@ class Hub:
         self.active_link = None
         self.watch_model = ""
         self.events = collections.deque(maxlen=50)
+        self.overlay = queue.Queue()    # (kind, text, sticky) for the on-screen action label
         self.last_event = "Waiting for the watch…"
         self.samples = 0
         self.rate = 0.0
@@ -94,6 +96,10 @@ class Hub:
     def watch_msg(self, text: str):
         self.send("msg " + text.replace("\n", " "))
 
+    def flash(self, kind: str, text: str, sticky: bool = False):
+        """Show an action in the on-screen overlay. sticky = stays until the next flash."""
+        self.overlay.put((kind, text, sticky))
+
     def event(self, text: str):
         self.last_event = text
         self.events.append((time.time(), text))
@@ -142,15 +148,22 @@ class Hub:
         if ev == "active":
             on = kw["active"]
             self.event("Mouse " + ("ON" if on else "PAUSED"))
+            self.flash("on" if on else "off", "Mouse on" if on else "Mouse paused")
             self.haptic(80) if on else self.haptic(50, 80, 50)
             self.send("state " + ("on" if on else "off"))
         elif ev == "click":
-            self.event(kw["button"].capitalize() + " click")
-            self.haptic(15) if kw["button"] == "left" else self.haptic(15, 60, 15)
+            b = kw["button"]
+            self.event(b.capitalize() + " click")
+            self.flash(b, b.capitalize() + " click")
+            self.haptic(15) if b == "left" else self.haptic(15, 60, 15)
         elif ev == "scroll":
-            self.event("Scroll " + ("up" if kw["notches"] > 0 else "down"))
+            up = kw["notches"] > 0
+            self.event("Scroll " + ("up" if up else "down"))
+            self.flash("scroll", "Scroll up" if up else "Scroll down")
         elif ev == "dictate":
             self.voice.start()
+        elif ev == "lowered":
+            self.voice.on_lowered()
 
     # ----------------------------------------------------------------- loop
     def tick(self):

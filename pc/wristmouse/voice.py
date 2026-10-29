@@ -137,6 +137,8 @@ class Voice:
         self.hub.send("mic 1")
         self.hub.haptic(120)
         self.hub.event("Voice typing: listening")
+        hint = "lower your arm when done" if self.cfg["voice_trigger"] != "triple" else "stops when you stop talking"
+        self.hub.flash("voice", "Listening… (%s)" % hint, sticky=True)
 
     def cancel(self, why=""):
         if self.state == "listening":
@@ -146,6 +148,7 @@ class Voice:
         self._reset()
         if why:
             self.hub.event("Voice typing cancelled: " + why)
+            self.hub.flash("cancel", "Voice cancelled: " + why)
 
     def on_audio(self, b64: str):
         if self.state != "listening":
@@ -185,6 +188,15 @@ class Voice:
             else:
                 self.cancel("watch stopped the mic")
 
+    def on_lowered(self):
+        """Arm came down from the mouth: done talking."""
+        if self.state != "listening":
+            return
+        if self.speech:
+            self.finish()
+        else:
+            self.cancel("didn't hear anything")
+
     def tick(self):
         if self.state != "listening":
             return
@@ -205,6 +217,7 @@ class Voice:
         self.hub.haptic(40)
         audio = np.concatenate(self.chunks) if self.chunks else np.zeros(0, dtype=np.int16)
         self.state = "transcribing"
+        self.hub.flash("voice", "Turning speech into text…", sticky=True)
         self.hub.run_blocking(self._transcribe, audio, self._done)
 
     def _transcribe(self, audio):
@@ -217,12 +230,14 @@ class Voice:
         self._reset()
         if error is not None:
             self.hub.event("Voice typing failed: %s" % error)
+            self.hub.flash("cancel", "Voice typing failed")
             self.hub.watch_msg("Voice failed")
             return
         text = (text or "").strip()
         self.last_text = text
         if not text:
             self.hub.event("Voice typing: heard nothing")
+            self.hub.flash("cancel", "Didn't catch that")
             return
         self.run_text(text)
 
@@ -239,6 +254,8 @@ class Voice:
                 out.type_text(typed)
                 self.last_typed = typed
             self.hub.event('Typed: "%s"' % typed.strip())
+            shown = typed.strip()
+            self.hub.flash("typed", "Typed: " + (shown if len(shown) <= 40 else shown[:39] + "…"))
             self.hub.watch_msg(typed.strip()[:60])
             return
         if kind == "key":
@@ -254,4 +271,5 @@ class Voice:
         elif kind == "mouse":
             self.hub.engine.set_active(cmd[1])
         self.hub.event('Voice command: "%s"' % commands.normalize(text))
+        self.hub.flash("command", "Command: " + commands.normalize(text))
         self.hub.watch_msg(commands.normalize(text))

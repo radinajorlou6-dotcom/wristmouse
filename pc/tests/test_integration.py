@@ -45,6 +45,7 @@ def free_port(kind=socket.SOCK_STREAM):
 def start_core(text="hello world"):
     cfg = Config(persist=False)
     cfg["connection"] = "wifi"
+    cfg["voice_trigger"] = "triple"
     cfg["tcp_port"] = free_port()
     cfg["udp_port"] = free_port(socket.SOCK_DGRAM)
     out = DryOutput()

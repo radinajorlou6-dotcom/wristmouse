@@ -186,6 +186,7 @@ class SmoothMover:
 
     def __init__(self, out, min_delay=8.0, max_delay=120.0):
         self.out = out
+        self.enabled = True
         self.min_delay = min_delay
         self.max_delay = max_delay
         self.q = collections.deque()
@@ -208,6 +209,9 @@ class SmoothMover:
             self.q.append((0.0, dx, dy))
 
     def move_at(self, t_watch, dx, dy):
+        if not self.enabled:
+            self.out.move(dx, dy)
+            return
         now = time.monotonic() * 1000.0
         with self.lock:
             if self._last_t is not None and abs(t_watch - self._last_t) > 2000:

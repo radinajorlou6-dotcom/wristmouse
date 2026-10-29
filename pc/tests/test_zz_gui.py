@@ -33,6 +33,18 @@ def test_window_builds_and_refreshes():
     app._refresh()
     app.root.update()
     assert "Waiting" in app.conn_lbl.cget("text")
+    assert app.overlay is not None
+    core.hub.flash("left", "Left click")
+    core.hub.flash("scroll", "Scroll down")
+    core.hub.flash("scroll", "Scroll down")
+    for _ in range(10):
+        app.root.update()
+        import time
+        time.sleep(0.04)
+    assert "×2" in app.overlay.label.cget("text")
+    for mode in ("corner", "off", "cursor"):
+        app._overlay_changed(mode)
+        app.root.update()
     app.root.destroy()
     app.vars.clear()
     del app

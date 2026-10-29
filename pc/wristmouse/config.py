@@ -7,7 +7,7 @@ import sys
 import threading
 
 APP_NAME = "WristMouse"
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 
 log = logging.getLogger("wristmouse")
 
@@ -56,12 +56,16 @@ DEFAULTS = {
     "palm_hold_ms": 800,
     "start_active": True,
     # voice
+    "voice_trigger": "raise",      # raise (watch to mouth) | triple (pinch) | both
+    "raise_hold_ms": 500,
     "voice_model": "base.en",
     "voice_silence_ms": 1100,
     "voice_max_s": 25,
     "voice_min_level": 500,
     # misc
     "haptics": True,
+    "overlay": "cursor",           # cursor | corner | off
+    "smooth_cursor": True,
     "watch_adb_address": "",
 }
 

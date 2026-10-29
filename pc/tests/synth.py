@@ -20,6 +20,24 @@ class Synth:
         self.out.append((self.t, tuple(x + n(0.03) for x in a), tuple(x + n(0.005) for x in w)))
         self.t += self.dt
 
+    def move_to(self, base, ms=400):
+        """Turn the watch to a new resting orientation smoothly, with the matching gyro signal."""
+        import numpy as np
+        a0 = np.array(self.base, float); a1 = np.array(base, float)
+        u0, u1 = a0 / np.linalg.norm(a0), a1 / np.linalg.norm(a1)
+        axis = np.cross(u1, u0)            # dg/dt = g x w  ->  w along u1 x u0... solve per step
+        ang = math.acos(max(-1.0, min(1.0, float(np.dot(u0, u1)))))
+        n = max(1, int(ms / self.dt))
+        an = np.linalg.norm(axis)
+        w = (axis / an) * (ang / (ms / 1000.0)) if an > 1e-9 else np.zeros(3)
+        for i in range(1, n + 1):
+            f = i / n
+            v = np.sin((1 - f) * ang) * u0 + np.sin(f * ang) * u1
+            v = v / (np.sin(ang) if ang > 1e-6 else 1.0)
+            v = v / np.linalg.norm(v) * G
+            self._sample(a=tuple(v), w=tuple(w))
+        self.base = tuple(base)
+
     def rest(self, ms):
         for _ in range(int(ms / self.dt)):
             self._sample()

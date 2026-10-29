@@ -5,7 +5,8 @@ Gestures
     point / swing the forearm  move the cursor (air mouse)
     single finger pinch ...... left click
     double pinch ............. right click
-    triple pinch ............. start voice typing
+    raise watch to mouth ..... start voice typing (lower the arm to finish)
+    triple pinch ............. start voice typing (if chosen in settings)
     quick flick / twist ...... scroll
 
 Cursor model: rotation is measured relative to the real world, not the watch. We track which
@@ -30,6 +31,10 @@ FLICK_UNDO_MS = 140        # ... and before a flick is the flick's own wind-up
 FLICK_RETURN_MS = 450      # ignore the opposite "return swing" after a flick for this long
 FLICK_REPEAT_MS = 150
 PALM_UP_RATIO = -0.7       # gravity z / |g| below this = screen facing the floor
+# "watch at mouth": forearm pointing well upward and the screen facing sideways (towards you)
+RAISE_ON_X, RAISE_ON_Z = 0.75, 0.45
+RAISE_OFF_X, RAISE_OFF_Z = 0.55, 0.65
+RAISE_UNDO_MS = 1100       # cursor/scroll caused by lifting the arm gets undone
 GAP_RESET_MS = 250
 G = 9.81
 FOREARM = (1.0, 0.0, 0.0)  # the watch's x axis runs along the forearm
@@ -86,6 +91,11 @@ class Engine:
         self.flick_block_same = -1e12
         self.freeze_until = -1e12
         self.history = collections.deque()   # (t, dx, dy) actually applied, for undo
+        self.scrolls = collections.deque()   # (t, notches), for undo when the arm is raised
+        self.raised = False
+        self.raise_since = None
+        self.raise_fired = False
+        self.calm_until = -1e12              # no flicks/pinches/cursor right after lowering
         self.recent_m = collections.deque()
         self.still_since = None
         self._peak_decay_t = None
@@ -161,6 +171,8 @@ class Engine:
             return
 
         up = (g[0] / gn, g[1] / gn, g[2] / gn)
+        if self._posture(t, up):
+            return
         yaw, pitch, roll = self._world_rates(w, up)
         self._flick(t, pitch, roll)
         self._pinch(t, m, wmag)
@@ -203,6 +215,41 @@ class Engine:
         roll = _dot(w, FOREARM)
         return yaw, pitch, roll
 
+    def _posture(self, t, up):
+        """Watch raised to the mouth -> voice typing. Returns True while raised (no other gestures)."""
+        c = self.cfg
+        if c["voice_trigger"] not in ("raise", "both"):
+            self.raised = False
+            return False
+        sx = -1.0 if c["invert_y"] else 1.0   # flipped watch: the hand is towards -x
+        fx, fz = sx * up[0], abs(up[2])
+        if not self.raised:
+            if fx > RAISE_ON_X and fz < RAISE_ON_Z:
+                self.raised = True
+                self.raise_since = t
+                self.raise_fired = False
+                self.taps.clear()
+        elif fx < RAISE_OFF_X or fz > RAISE_OFF_Z:
+            self.raised = False
+            self.calm_until = t + 500
+            self.freeze_until = max(self.freeze_until, t + 500)
+            self.history.clear()
+            if self.raise_fired:
+                self.notify("lowered")
+            return False
+        if not self.raised:
+            return False
+        if not self.raise_fired and t - self.raise_since >= c["raise_hold_ms"]:
+            self.raise_fired = True
+            # put the cursor and page back where they were before you lifted your arm
+            self._undo(t, RAISE_UNDO_MS + c["raise_hold_ms"])
+            for st, n in list(self.scrolls):
+                if st >= t - RAISE_UNDO_MS - c["raise_hold_ms"]:
+                    self.out.scroll(-n)
+            self.scrolls.clear()
+            self.notify("dictate")
+        return True
+
     def _update_bias(self, t, w_raw, wmag):
         # slowly learn gyro drift while the hand is very still
         if wmag < 0.06:
@@ -238,13 +285,14 @@ class Engine:
             uy += dy
         if ux or uy:
             self._move(t, -ux, -uy)
-        self.history.clear()
 
     def _flick(self, t, pitch, roll):
         c = self.cfg
         # positive = "scroll down" gesture
         v = roll if c["scroll_gesture"] == "twist" else -pitch
         thr = c["flick_threshold"]
+        if t < self.calm_until:
+            return
         if abs(v) >= thr:
             d = 1 if v > 0 else -1
             if not self.flick_active:
@@ -258,6 +306,9 @@ class Engine:
                         notches = -notches
                     self._undo(t, FLICK_UNDO_MS)
                     self.out.scroll(notches)
+                    self.scrolls.append((t, notches))
+                    while self.scrolls and self.scrolls[0][0] < t - 3000:
+                        self.scrolls.popleft()
                     self.notify("scroll", notches=notches)
                     self.flick_until = t + FLICK_RETURN_MS
                     self.flick_block_same = t + FLICK_REPEAT_MS
@@ -278,6 +329,8 @@ class Engine:
             return
         if self.pinch_blocked():
             return  # the watch's own vibration shakes the accelerometer
+        if t < self.calm_until:
+            return
         if t - self.last_pinch_t < PINCH_REFRACTORY_MS or t < self.flick_until:
             return
         prior = max((mm for tt, mm in rm if t - 140 <= tt <= t - 40), default=0.0)
@@ -296,8 +349,8 @@ class Engine:
         if n == 1:
             self.out.click("left")
             self.notify("click", button="left")
-        elif n == 2:
-            self.out.click("right")
+        elif n == 2 or self.cfg["voice_trigger"] == "raise":
+            self.out.click("right")      # 3+ pinches count as a right click unless triple = voice
             self.notify("click", button="right")
         else:
             self.notify("dictate")
@@ -314,7 +367,7 @@ class Engine:
         # very light smoothing (~10 ms) to take the edge off sensor noise
         self.rx = 0.5 * self.rx + 0.5 * (-yaw)
         self.ry = 0.5 * self.ry + 0.5 * (-pitch)
-        while self.history and self.history[0][0] < t - 200:
+        while self.history and self.history[0][0] < t - 2500:
             self.history.popleft()
         if t < self.freeze_until:
             return

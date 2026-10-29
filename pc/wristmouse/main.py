@@ -53,6 +53,8 @@ def main(argv=None):
 
     cfg = Config(args.config) if args.config else Config()
     out = make_output(dry=args.dry)
+    if hasattr(out, "enabled"):
+        out.enabled = bool(cfg["smooth_cursor"])
     core = Core(cfg, out)
     if not args.no_voice:
         core.hub.voice.transcriber.load_async(cfg["voice_model"])

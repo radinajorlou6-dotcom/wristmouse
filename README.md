@@ -15,10 +15,12 @@ The watch app is inside it. Install it from the laptop app's **Install on watch*
 | Point / swing your forearm | Move the cursor (works palm-down or sideways, no setup) |
 | Pinch thumb + index finger | Left click |
 | Double pinch | Right click |
-| Triple pinch | Voice typing. Talk, and it types when you stop |
+| Raise the watch to your mouth (hold ½ s) | Voice typing. Talk, then lower your arm and it types (triple pinch is an option in settings) |
 | Quick flick down / up (or wrist twist, if you pick that) | Scroll down / up |
 
 Pause the mouse (palm up) before you put your arm down or pick something up.
+
+A small label next to the cursor shows each action as it happens (Left click, Scroll down ×3, Listening…), so you don't need vibration to know a pinch registered. You can move it to the corner or turn it off on the Gestures tab.
 
 ### Voice commands
 Anything you say is typed. If the whole phrase is a command, it runs instead:

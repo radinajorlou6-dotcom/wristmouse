@@ -14,7 +14,7 @@ CHEATSHEET = (
     "Point / swing your forearm  →  move cursor\n"
     "Pinch (thumb + index)  →  left click\n"
     "Double pinch  →  right click\n"
-    "Triple pinch  →  voice typing (stops when you stop talking)\n"
+    "Raise watch to your mouth  →  voice typing (lower your arm when done)\n"
     "Quick flick down / up (or twist)  →  scroll"
 )
 
@@ -59,6 +59,13 @@ class App:
         log = logging.getLogger("wristmouse")
         self.root.report_callback_exception = lambda t, v, tb: log.error("window error", exc_info=(t, v, tb))
         self._build()
+        self.overlay = None
+        try:
+            from .overlay import Overlay
+
+            self.overlay = Overlay(self.root, cfg, core.hub.overlay)
+        except Exception:
+            log.exception("overlay failed to start")
         self.root.after(150, self._refresh)
         self.root.protocol("WM_DELETE_WINDOW", self._close)
 
@@ -152,6 +159,19 @@ class App:
         self.hap = tk.BooleanVar(value=self.cfg["haptics"])
         ttk.Checkbutton(t, text="Vibrate the watch on clicks and mode changes", variable=self.hap,
                         command=lambda: self._set("haptics", self.hap.get())).pack(anchor="w", pady=2)
+        self.smooth = tk.BooleanVar(value=self.cfg["smooth_cursor"])
+        ttk.Checkbutton(t, text="Smooth cursor (evens out choppy Wi-Fi; adds a tiny delay)", variable=self.smooth,
+                        command=self._smooth_changed).pack(anchor="w", pady=2)
+
+        f = ttk.Frame(t)
+        f.pack(fill="x", pady=4)
+        ttk.Label(f, text="Show action on screen", width=22).pack(side="left")
+        names = {"cursor": "Next to the cursor", "corner": "Bottom-right corner", "off": "Off"}
+        self.ov = tk.StringVar(value=names[self.cfg["overlay"]])
+        cb = ttk.Combobox(f, textvariable=self.ov, state="readonly", width=20, values=list(names.values()))
+        cb.pack(side="left", padx=6)
+        cb.bind("<<ComboboxSelected>>", lambda e: self._overlay_changed(
+            {v: k for k, v in names.items()}[self.ov.get()]))
 
         b = ttk.Frame(t)
         b.pack(fill="x", pady=10)
@@ -194,7 +214,21 @@ class App:
     def _tab_voice(self, nb):
         t = ttk.Frame(nb, padding=10)
         f = ttk.Frame(t)
-        f.pack(fill="x")
+        f.pack(fill="x", pady=(0, 6))
+        ttk.Label(f, text="Start voice typing by:").pack(side="left")
+        trig = {"raise": "Raising the watch to my mouth", "triple": "Triple pinch", "both": "Either one"}
+        self.trig = tk.StringVar(value=trig[self.cfg["voice_trigger"]])
+        cb = ttk.Combobox(f, textvariable=self.trig, state="readonly", width=28, values=list(trig.values()))
+        cb.pack(side="left", padx=6)
+        cb.bind("<<ComboboxSelected>>", lambda e: self._set(
+            "voice_trigger", {v: k for k, v in trig.items()}[self.trig.get()]))
+        ttk.Label(t, foreground="#777", wraplength=540, text=(
+            "Raise: bring the watch up to your mouth like you're talking into it and hold for half a "
+            "second. Talk, then lower your arm and it types. Whatever the cursor did while you lifted "
+            "your arm is undone. With raise on, three pinches count as a right click.")).pack(anchor="w")
+        self._slider(t, "Hold at mouth for (ms)", "raise_hold_ms", 200, 1500, "{:.0f}", integer=True)
+        f = ttk.Frame(t)
+        f.pack(fill="x", pady=(8, 0))
         ttk.Label(f, text="Speech model:").pack(side="left")
         self.model = tk.StringVar(value=self.cfg["voice_model"])
         cb = ttk.Combobox(f, textvariable=self.model, state="readonly", width=12,
@@ -251,6 +285,17 @@ class App:
     def _model_changed(self):
         self._set("voice_model", self.model.get())
         self.core.hub.voice.transcriber.load_async(self.model.get())
+
+    def _smooth_changed(self):
+        self._set("smooth_cursor", self.smooth.get())
+        out = self.core.hub.out
+        if hasattr(out, "enabled"):
+            out.enabled = self.smooth.get()
+
+    def _overlay_changed(self, value):
+        self._set("overlay", value)
+        if self.overlay and value != "off":
+            self.overlay.test()
 
     def _reset(self):
         if not messagebox.askyesno(APP_NAME, "Reset all gesture settings to defaults?"):

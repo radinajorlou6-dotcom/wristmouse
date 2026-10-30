@@ -5,6 +5,7 @@ Gestures
     point / swing the forearm  move the cursor (air mouse)
     single finger pinch ...... left click
     double pinch ............. right click
+    double pinch, then move .. drag (hold the left button); pinch again to drop
     raise watch to mouth ..... start voice typing (lower the arm to finish)
     triple pinch ............. start voice typing (if chosen in settings)
     quick flick / twist ...... scroll
@@ -35,6 +36,7 @@ PALM_UP_RATIO = -0.7       # gravity z / |g| below this = screen facing the floo
 RAISE_ON_X, RAISE_ON_Z = 0.75, 0.45
 RAISE_OFF_X, RAISE_OFF_Z = 0.55, 0.65
 RAISE_UNDO_MS = 1100       # cursor/scroll caused by lifting the arm gets undone
+DRAG_MAX_MS = 60_000       # safety: drop automatically after a minute
 GAP_RESET_MS = 250
 G = 9.81
 FOREARM = (1.0, 0.0, 0.0)  # the watch's x axis runs along the forearm
@@ -78,6 +80,10 @@ class Engine:
 
     # ------------------------------------------------------------------ state
     def reset(self):
+        if getattr(self, "dragging", False):
+            self._drop(None, "reset")   # never leave the mouse button stuck down
+        self.dragging = False
+        self.drag_since = 0.0
         self.last_t = None
         self.g = None
         self.prev_a = None
@@ -104,6 +110,8 @@ class Engine:
     def set_active(self, active: bool, t=None):
         if active == self.active:
             return
+        if not active and self.dragging:
+            self._drop(self.last_t, "paused")
         self.active = active
         self.taps.clear()
         self.history.clear()
@@ -171,7 +179,9 @@ class Engine:
             return
 
         up = (g[0] / gn, g[1] / gn, g[2] / gn)
-        if self._posture(t, up):
+        if self.dragging and t - self.drag_since > DRAG_MAX_MS:
+            self._drop(t, "timeout")
+        if not self.dragging and self._posture(t, up):
             return
         yaw, pitch, roll = self._world_rates(w, up)
         self._flick(t, pitch, roll)
@@ -291,7 +301,7 @@ class Engine:
         # positive = "scroll down" gesture
         v = roll if c["scroll_gesture"] == "twist" else -pitch
         thr = c["flick_threshold"]
-        if t < self.calm_until:
+        if t < self.calm_until or self.dragging:
             return
         if abs(v) >= thr:
             d = 1 if v > 0 else -1
@@ -337,20 +347,75 @@ class Engine:
         if prior >= 0.6 * thr:
             return  # part of a longer shake, not a crisp tap
         self.last_pinch_t = t
-        self.taps.append(t)
         self._undo(t, PINCH_UNDO_MS)  # keep the cursor where you aimed
         self.freeze_until = max(self.freeze_until, t + PINCH_REFRACTORY_MS)
+        if self.dragging:
+            self._drop(t, "pinch")    # pinch while dragging = let go, right away
+            return
+        self.taps.append(t)
+
+    def _act(self, t, name, *args):
+        """Button actions go through the same timeline as cursor movement (see SmoothMover)."""
+        at = getattr(self.out, "act_at", None)
+        if at is not None and t is not None:
+            at(t, name, *args)
+        else:
+            getattr(self.out, name)(*args)
+
+    def _moved_since(self, t0):
+        mx = my = 0.0
+        for ht, dx, dy in self.history:
+            if ht > t0:
+                mx += dx
+                my += dy
+        return mx, my
+
+    def _start_drag(self, t, from_tap=None):
+        """Press the left button. If the drag was recognised from movement after a double pinch,
+        the press happens back where the pinch was and the movement is replayed on top."""
+        mx = my = 0.0
+        if from_tap is not None:
+            mx, my = self._moved_since(from_tap)
+            if mx or my:
+                self._move(t, -mx, -my)
+        self._act(t, "press")
+        if mx or my:
+            self._move(t, mx, my)
+        self.dragging = True
+        self.drag_since = t if t is not None else 0.0
+        self.taps.clear()
+        self.notify("drag")
+
+    def _drop(self, t, why):
+        self.dragging = False
+        self._act(t, "release")
+        self.notify("drop", why=why)
+
+    def set_drag(self, on: bool):
+        """Voice commands 'grab' / 'drop'."""
+        if on and not self.dragging and self.active:
+            self._start_drag(self.last_t)
+        elif not on and self.dragging:
+            self._drop(self.last_t, "voice")
 
     def _resolve_taps(self, t):
-        if not self.taps or t - self.taps[-1] <= self.cfg["multi_tap_window_ms"]:
+        if not self.taps:
+            return
+        c = self.cfg
+        if len(self.taps) == 2 and c["drag_enabled"]:
+            mx, my = self._moved_since(self.taps[-1])
+            if math.hypot(mx, my) >= c["drag_start_px"]:
+                self._start_drag(t, from_tap=self.taps[-1])
+                return
+        if t - self.taps[-1] <= c["multi_tap_window_ms"]:
             return
         n = len(self.taps)
         self.taps.clear()
         if n == 1:
-            self.out.click("left")
+            self._act(t, "click", "left")
             self.notify("click", button="left")
-        elif n == 2 or self.cfg["voice_trigger"] == "raise":
-            self.out.click("right")      # 3+ pinches count as a right click unless triple = voice
+        elif n == 2 or c["voice_trigger"] == "raise":
+            self._act(t, "click", "right")   # 3+ pinches count as a right click unless triple = voice
             self.notify("click", button="right")
         else:
             self.notify("dictate")

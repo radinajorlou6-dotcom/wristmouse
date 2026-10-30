@@ -270,6 +270,8 @@ class Voice:
             out.scroll(cmd[1])
         elif kind == "mouse":
             self.hub.engine.set_active(cmd[1])
+        elif kind == "drag":
+            self.hub.engine.set_drag(cmd[1])
         self.hub.event('Voice command: "%s"' % commands.normalize(text))
         self.hub.flash("command", "Command: " + commands.normalize(text))
         self.hub.watch_msg(commands.normalize(text))

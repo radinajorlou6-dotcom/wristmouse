@@ -14,6 +14,7 @@ CHEATSHEET = (
     "Point / swing your forearm  →  move cursor\n"
     "Pinch (thumb + index)  →  left click\n"
     "Double pinch  →  right click\n"
+    "Double pinch, then move  →  drag (pinch again to drop)\n"
     "Raise watch to your mouth  →  voice typing (lower your arm when done)\n"
     "Quick flick down / up (or twist)  →  scroll"
 )
@@ -25,7 +26,7 @@ VOICE_HELP = (
     "delete that (removes what was just typed) · delete word\n"
     "new tab · close tab · next tab · previous tab · go back · go forward · refresh\n"
     "switch window · minimize · maximize · show desktop · start menu\n"
-    "click · right click · double click · scroll up · scroll down\n"
+    "click · right click · double click · scroll up · scroll down · grab · drop\n"
     "pause mouse · start mouse · cancel\n"
     'Say "type …" to type words that are commands, e.g. "type copy".'
 )
@@ -159,6 +160,11 @@ class App:
         self.hap = tk.BooleanVar(value=self.cfg["haptics"])
         ttk.Checkbutton(t, text="Vibrate the watch on clicks and mode changes", variable=self.hap,
                         command=lambda: self._set("haptics", self.hap.get())).pack(anchor="w", pady=2)
+        self.drag = tk.BooleanVar(value=self.cfg["drag_enabled"])
+        ttk.Checkbutton(t, text="Double pinch then move = drag (pinch again to drop)", variable=self.drag,
+                        command=lambda: self._set("drag_enabled", self.drag.get())).pack(anchor="w", pady=2)
+        self._slider(t, "Drag starts after moving (px)", "drag_start_px", 10, 120, "{:.0f}", integer=True,
+                     help_text="Raise this if right clicks sometimes turn into drags.")
         self.smooth = tk.BooleanVar(value=self.cfg["smooth_cursor"])
         ttk.Checkbutton(t, text="Smooth cursor (evens out choppy Wi-Fi; adds a tiny delay)", variable=self.smooth,
                         command=self._smooth_changed).pack(anchor="w", pady=2)

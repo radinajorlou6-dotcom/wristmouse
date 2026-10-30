@@ -7,7 +7,7 @@ import sys
 import threading
 
 APP_NAME = "WristMouse"
-VERSION = "1.5.0"
+VERSION = "1.6.0"
 
 log = logging.getLogger("wristmouse")
 
@@ -47,6 +47,8 @@ DEFAULTS = {
     "pinch_threshold": 1.6,        # m/s^2 change between two samples
     "pinch_max_gyro": 1.2,         # rad/s; hand must be fairly still for a pinch
     "multi_tap_window_ms": 350,
+    "drag_enabled": True,          # double pinch then move = drag; pinch again to drop
+    "drag_start_px": 30,           # how far you must move right after the double pinch
     # scrolling
     "scroll_gesture": "flick",     # flick (quick up/down) | twist (roll the forearm)
     "flick_threshold": 5.0,        # rad/s

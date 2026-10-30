@@ -30,6 +30,9 @@ COMMANDS = {
     # mouse
     "click": ("click", "left"), "left click": ("click", "left"), "right click": ("click", "right"),
     "double click": ("click", "left", 2),
+    "grab": ("drag", True), "hold": ("drag", True), "pick up": ("drag", True), "drag": ("drag", True),
+    "drop": ("drag", False), "let go": ("drag", False), "release": ("drag", False),
+    "drop it": ("drag", False),
     "scroll up": ("scroll", 5), "scroll down": ("scroll", -5),
     "pause mouse": ("mouse", False), "stop mouse": ("mouse", False),
     "start mouse": ("mouse", True), "resume mouse": ("mouse", True),

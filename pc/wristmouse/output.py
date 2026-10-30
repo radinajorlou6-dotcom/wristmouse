@@ -46,6 +46,12 @@ class DryOutput(Output):
     def scroll(self, notches):
         self.actions.append(("scroll", notches))
 
+    def press(self):
+        self.actions.append(("press",))
+
+    def release(self):
+        self.actions.append(("release",))
+
     def key(self, *keys):
         self.actions.append(("key",) + tuple(keys))
 
@@ -100,6 +106,7 @@ class WinOutput(Output):
         self.POINT = wintypes.POINT
         self.rx = 0.0
         self.ry = 0.0
+        self.held = False
 
     # -------------------------------------------------------------- helpers
     def _send(self, inputs):
@@ -109,9 +116,9 @@ class WinOutput(Output):
         if sent != n:
             log.debug("SendInput sent %d/%d", sent, n)
 
-    def _mouse(self, flags, data=0):
+    def _mouse(self, flags, data=0, dx=0, dy=0):
         i = self.INPUT(type=0)
-        i.mi = self.MOUSEINPUT(0, 0, data & 0xFFFFFFFF, flags, 0, 0)
+        i.mi = self.MOUSEINPUT(dx, dy, data & 0xFFFFFFFF, flags, 0, 0)
         return i
 
     def _key(self, vk=0, scan=0, flags=0):
@@ -134,8 +141,21 @@ class WinOutput(Output):
         self.rx -= ix
         self.ry -= iy
         p = self.POINT()
-        if self.user32.GetCursorPos(self.ct.byref(p)):
-            self.user32.SetCursorPos(p.x + ix, p.y + iy)
+        if not self.user32.GetCursorPos(self.ct.byref(p)):
+            return
+        x, y = p.x + ix, p.y + iy
+        if not self.held:
+            self.user32.SetCursorPos(x, y)
+            return
+        # While dragging, send a real mouse-move input (with the button state) so apps like
+        # browsers see a proper drag. Absolute coordinates avoid Windows pointer acceleration.
+        gm = self.user32.GetSystemMetrics
+        vx, vy, vw, vh = gm(76), gm(77), gm(78), gm(79)
+        x = max(vx, min(x, vx + vw - 1))
+        y = max(vy, min(y, vy + vh - 1))
+        nx = int(round((x - vx) * 65535 / max(vw - 1, 1)))
+        ny = int(round((y - vy) * 65535 / max(vh - 1, 1)))
+        self._send([self._mouse(0x0001 | 0x8000 | 0x4000, 0, nx, ny)])
 
     def click(self, button="left", count=1):
         down, up = {"left": (0x0002, 0x0004), "right": (0x0008, 0x0010), "middle": (0x0020, 0x0040)}[button]
@@ -146,6 +166,14 @@ class WinOutput(Output):
 
     def scroll(self, notches):
         self._send([self._mouse(0x0800, int(notches) * 120)])
+
+    def press(self):
+        self.held = True
+        self._send([self._mouse(0x0002)])
+
+    def release(self):
+        self.held = False
+        self._send([self._mouse(0x0004)])
 
     def key(self, *keys):
         vks = [vk_for(k) for k in keys]
@@ -206,7 +234,23 @@ class SmoothMover:
 
     def move(self, dx, dy):
         with self.lock:
-            self.q.append((0.0, dx, dy))
+            self.q.append((0.0, dx, dy, None))
+
+    def act_at(self, t_watch, name, *args):
+        """Run a button action at the same point in the replayed timeline as the movement around
+        it, so a click or drag happens exactly where the cursor was at that moment."""
+        fn = getattr(self.out, name)
+        if not self.enabled:
+            fn(*args)
+            return
+        with self.lock:
+            if self.offset is None:
+                sched = 0.0
+            else:
+                sched = t_watch + self.offset + self.delay
+            if self.q and self.q[-1][0] > sched:
+                sched = self.q[-1][0]  # never run ahead of movement already queued
+            self.q.append((sched, 0.0, 0.0, lambda: fn(*args)))
 
     def move_at(self, t_watch, dx, dy):
         if not self.enabled:
@@ -228,29 +272,34 @@ class SmoothMover:
                 srt = sorted(self.late)
                 p95 = srt[int(0.95 * (len(srt) - 1))]
                 self.delay = max(self.min_delay, min(self.max_delay, p95 + 5.0))
-            self.q.append((t_watch + self.offset + self.delay, dx, dy))
+            self.q.append((t_watch + self.offset + self.delay, dx, dy, None))
 
     def _run(self):
         while True:
             time.sleep(0.004)
             now = time.monotonic() * 1000.0
+            steps = []   # merged moves, with actions kept in order between them
             mx = my = 0.0
             with self.lock:
                 q = self.q
-                while q and q[0][0] <= now:
-                    _, dx, dy = q.popleft()
-                    mx += dx
-                    my += dy
-                if len(q) > 400:  # never let it fall far behind
-                    while q:
-                        _, dx, dy = q.popleft()
+                flush_all = len(q) > 400  # never let it fall far behind
+                while q and (flush_all or q[0][0] <= now):
+                    _, dx, dy, fn = q.popleft()
+                    if fn is None:
                         mx += dx
                         my += dy
-            if mx or my:
+                    else:
+                        steps.append((mx, my, fn))
+                        mx = my = 0.0
+            steps.append((mx, my, None))
+            for sx, sy, fn in steps:
                 try:
-                    self.out.move(mx, my)
+                    if sx or sy:
+                        self.out.move(sx, sy)
+                    if fn is not None:
+                        fn()
                 except Exception:
-                    log.exception("cursor move failed")
+                    log.exception("cursor output failed")
 
 
 def make_output(dry: bool = False) -> Output:

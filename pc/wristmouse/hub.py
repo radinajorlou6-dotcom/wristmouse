@@ -160,6 +160,16 @@ class Hub:
             up = kw["notches"] > 0
             self.event("Scroll " + ("up" if up else "down"))
             self.flash("scroll", "Scroll up" if up else "Scroll down")
+        elif ev == "drag":
+            self.event("Drag started")
+            self.flash("drag", "Dragging. Pinch to drop", sticky=True)
+            self.haptic(30, 50, 30)
+        elif ev == "drop":
+            why = kw.get("why", "")
+            self.event("Dropped (%s)" % why)
+            self.flash("drop", {"pinch": "Dropped", "voice": "Dropped", "paused": "Dropped (mouse paused)",
+                                "timeout": "Dropped (held too long)"}.get(why, "Dropped"))
+            self.haptic(30)
         elif ev == "dictate":
             self.voice.start()
         elif ev == "lowered":

@@ -371,3 +371,120 @@ def test_overlay_events_from_hub():
         hub.on_line(link, line)
     kind, text, sticky = hub.overlay.get_nowait()
     assert (kind, text, sticky) == ("left", "Left click", False)
+
+
+class PosOut(DryOutput):
+    """Records where the cursor was for every button event."""
+    def press(self):
+        self.actions.append(("press", round(self.x), round(self.y)))
+
+    def release(self):
+        self.actions.append(("release", round(self.x), round(self.y)))
+
+
+def make_pos():
+    cfg = Config(persist=False)
+    out = PosOut()
+    ev = []
+    eng = Engine(cfg, out, lambda e, **kw: ev.append(e))
+    return cfg, out, eng, ev
+
+
+def test_double_pinch_and_move_drags_then_pinch_drops():
+    cfg, out, eng, ev = make_pos()
+    s = Synth()
+    s.rest(500); s.pinch(); s.rest(200); s.pinch()
+    s.feed(eng)
+    x_pinch = out.x
+    s.rotate(2, -1.5, 400)          # move right while "holding"
+    s.rest(300)
+    s.feed(eng)
+    presses = out.of("press")
+    assert len(presses) == 1 and abs(presses[0][1] - x_pinch) < 3   # pressed where you pinched
+    assert out.x > x_pinch + 200                                     # and the tab moved
+    assert eng.dragging and "drag" in ev
+    s.pinch(); s.rest(600)
+    s.feed(eng)
+    assert out.of("release") and not eng.dragging
+    assert out.of("click") == []                                     # no stray clicks
+    # press happened before the drag movement, release after it
+    kinds = [a[0] for a in out.actions]
+    assert kinds.index("press") < max(i for i, k in enumerate(kinds) if k == "move")
+
+
+def test_double_pinch_still_is_right_click_not_drag():
+    cfg, out, eng, ev = make_pos()
+    s = Synth()
+    s.rest(500); s.pinch(); s.rest(200); s.pinch(); s.rest(700)
+    s.feed(eng)
+    assert out.of("click") == [("click", "right", 1)]
+    assert out.of("press") == []
+
+
+def test_single_pinch_and_move_is_click_not_drag():
+    cfg, out, eng, ev = make_pos()
+    s = Synth()
+    s.rest(500); s.pinch(); s.rest(150); s.rotate(2, -1.5, 300); s.rest(400)
+    s.feed(eng)
+    assert out.of("click") == [("click", "left", 1)]
+    assert out.of("press") == []
+
+
+def test_pause_and_reset_release_the_button():
+    for how in ("pause", "reset"):
+        cfg, out, eng, ev = make_pos()
+        s = Synth()
+        s.rest(500); s.pinch(); s.rest(200); s.pinch(); s.rotate(2, -1.5, 400)
+        s.feed(eng)
+        assert eng.dragging
+        if how == "pause":
+            s.palm_up(1000); s.feed(eng)
+        else:
+            eng.reset()
+        assert not eng.dragging and len(out.of("release")) == 1, how
+
+
+def test_no_scroll_while_dragging():
+    cfg, out, eng, ev = make_pos()
+    s = Synth()
+    s.rest(500); s.pinch(); s.rest(200); s.pinch(); s.rotate(2, -1.5, 400)
+    s.flick(1, 1); s.rest(300)
+    s.feed(eng)
+    assert eng.dragging and out.of("scroll") == []
+
+
+def test_voice_grab_and_drop():
+    cfg, out, eng, ev = make_pos()
+    s = Synth(); s.rest(300); s.feed(eng)
+    eng.set_drag(True)
+    assert eng.dragging and len(out.of("press")) == 1
+    eng.set_drag(False)
+    assert not eng.dragging and len(out.of("release")) == 1
+    assert commands.parse("Let go.") == ("drag", False)
+    assert commands.parse("grab") == ("drag", True)
+
+
+def test_smoothmover_keeps_actions_in_order():
+    import time
+    from wristmouse.output import SmoothMover
+
+    rec = PosOut()
+    m = SmoothMover(rec)
+    t = 1_000_000.0
+    for _ in range(5):
+        m.move_at(t, 10, 0); t += 10
+    m.act_at(t, "press")
+    for _ in range(5):
+        m.move_at(t, 10, 0); t += 10
+    m.act_at(t, "release")
+    time.sleep(0.4)
+    assert out_seq(rec) == ["move", "press", "move", "release"]
+    assert rec.of("press")[0][1] == 50 and rec.of("release")[0][1] == 100
+
+
+def out_seq(rec):
+    seq = []
+    for a in rec.actions:
+        if not seq or seq[-1] != a[0]:
+            seq.append(a[0])
+    return seq

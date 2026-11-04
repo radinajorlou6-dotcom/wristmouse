@@ -11,7 +11,7 @@ from .transports import local_ipv4s
 
 CHEATSHEET = (
     "Palm up, hold 1 s  →  pause / resume mouse\n"
-    "Point / swing your forearm  →  move cursor\n"
+    "Point / swing your forearm (or slide on the desk in table mode)  →  move cursor\n"
     "Pinch (thumb + index)  →  left click\n"
     "Double pinch  →  right click\n"
     "Double pinch, then move  →  drag (pinch again to drop)\n"
@@ -27,7 +27,7 @@ VOICE_HELP = (
     "new tab · close tab · next tab · previous tab · go back · go forward · refresh\n"
     "switch window · minimize · maximize · show desktop · start menu\n"
     "click · right click · double click · scroll up · scroll down · grab · drop\n"
-    "pause mouse · start mouse · cancel\n"
+    "pause mouse · start mouse · table mode · air mode · cancel\n"
     'Say "type …" to type words that are commands, e.g. "type copy".'
 )
 
@@ -83,6 +83,8 @@ class App:
         self.mouse_lbl.pack(side="left")
         self.toggle_btn = ttk.Button(row, text="Pause", command=self._toggle_mouse)
         self.toggle_btn.pack(side="right")
+        self.mode_btn = ttk.Button(row, text="", command=self._toggle_mode)
+        self.mode_btn.pack(side="right", padx=6)
         self.voice_lbl = ttk.Label(top, text="Voice: –")
         self.voice_lbl.pack(anchor="w", pady=(4, 0))
         self.event_lbl = ttk.Label(top, text="", foreground="#555", wraplength=560)
@@ -99,6 +101,7 @@ class App:
         nb = ttk.Notebook(r)
         nb.pack(fill="both", expand=True, padx=8, pady=8)
         nb.add(self._tab_gestures(nb), text="Gestures")
+        nb.add(self._tab_table(nb), text="Table mode")
         nb.add(self._tab_connection(nb), text="Connection")
         nb.add(self._tab_voice(nb), text="Voice")
         nb.add(self._tab_watch(nb), text="Install on watch")
@@ -188,6 +191,37 @@ class App:
                   text="Movement follows your forearm relative to the room, so it works with your palm "
                        "down, sideways, or anything in between. Twisting your wrist doesn't move the cursor.").pack(anchor="w")
         return t
+
+    def _tab_table(self, nb):
+        t = ttk.Frame(nb, padding=10)
+        ttk.Label(t, wraplength=560, justify="left", text=(
+            "Table mode: rest your hand on the desk and slide it like a mouse. Forward = up, back = down, "
+            "left/right = left/right. Pinching, flicks, palm-up pause, raise-to-talk and dragging all work "
+            "the same.\n\nThe watch can't tell when you lift your hand, so recenter like a mouse with "
+            "acceleration: slide back slowly (cursor barely moves), slide forward quickly (cursor moves a lot). "
+            "Or pause with palm up, move your hand, and resume.")).pack(anchor="w")
+        self.mode_var = tk.StringVar(value=self.cfg["cursor_mode"])
+        f = ttk.Frame(t)
+        f.pack(fill="x", pady=8)
+        ttk.Radiobutton(f, text="Air mode (point your forearm)", value="air", variable=self.mode_var,
+                        command=lambda: self._set_mode(self.mode_var.get())).pack(anchor="w")
+        ttk.Radiobutton(f, text="Table mode (slide your hand on the desk)", value="table", variable=self.mode_var,
+                        command=lambda: self._set_mode(self.mode_var.get())).pack(anchor="w")
+        self._slider(t, "Table speed", "table_gain", 5000, 100000, "{:.0f}",
+                     help_text="How far the cursor moves per centimetre of hand movement.")
+        self._slider(t, "Table acceleration", "table_accel", 0, 4,
+                     help_text="Higher = fast slides go much further than slow ones (easier recentering).")
+        self._slider(t, "Forward/back speed", "table_y_gain", 0.5, 3, "{:.1f}×")
+        ttk.Label(t, foreground="#777", wraplength=560, text=(
+            "You can also switch by voice: say “table mode” or “air mode”.")).pack(anchor="w", pady=(6, 0))
+        return t
+
+    def _set_mode(self, mode):
+        self.core.call(self.core.hub.engine.set_mode, mode)
+        self.root.after(200, self.cfg.save)
+
+    def _toggle_mode(self):
+        self._set_mode("air" if self.cfg["cursor_mode"] == "table" else "table")
 
     def _tab_connection(self, nb):
         t = ttk.Frame(nb, padding=10)
@@ -468,6 +502,10 @@ class App:
         self.mouse_lbl.config(text="Mouse: " + ("ON" if s["active"] else "PAUSED"),
                               foreground="#0a7d2c" if s["active"] else "#a00")
         self.toggle_btn.config(text="Pause" if s["active"] else "Resume")
+        table = self.cfg["cursor_mode"] == "table"
+        self.mode_btn.config(text="Table mode ✓ (switch to air)" if table else "Air mode ✓ (switch to table)")
+        if hasattr(self, "mode_var") and self.mode_var.get() != self.cfg["cursor_mode"]:
+            self.mode_var.set(self.cfg["cursor_mode"])
         self.voice_lbl.config(text="Voice: " + s["voice"])
         self.event_lbl.config(text=s["event"])
         self.wifi_lbl.config(text="Wi-Fi: " + s["wifi"])

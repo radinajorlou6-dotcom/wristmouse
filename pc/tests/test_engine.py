@@ -488,3 +488,91 @@ def out_seq(rec):
         if not seq or seq[-1] != a[0]:
             seq.append(a[0])
     return seq
+
+
+def slide(s, fwd=0.0, right=0.0, ms=400, peak=3.0):
+    """Hand slides on the desk (watch face up, fingers towards +x, right = -y): accelerate then
+    brake, half-sine each. Returns the true distance travelled in metres."""
+    import math as _m
+    n = int(ms / s.dt)
+    dt = s.dt / 1000.0
+    v = d = 0.0
+    for i in range(n):
+        acc = peak * _m.sin(2 * _m.pi * i / n)
+        v += acc * dt
+        d += v * dt
+        b = s.base
+        s._sample(a=(b[0] + fwd * acc, b[1] - right * acc, b[2]))
+    return d
+
+
+def make_table():
+    cfg, out, eng, ev = make()
+    cfg["cursor_mode"] = "table"
+    return cfg, out, eng, ev
+
+
+def test_table_forward_moves_up_and_stops_cleanly():
+    cfg, out, eng, ev = make_table()
+    s = Synth()
+    s.rest(600)
+    d = slide(s, fwd=1.0)
+    s.rest(150)
+    s.feed(eng)
+    assert out.y < -0.4 * cfg["table_gain"] * d, (out.y, d)   # moved up a good amount
+    assert abs(out.x) < 0.1 * abs(out.y)
+    y_after = out.y
+    s.rest(1500)
+    s.feed(eng)
+    assert abs(out.y - y_after) < 5, "no drift once the hand stops"
+
+
+def test_table_back_left_right():
+    cfg, out, eng, ev = make_table()
+    s = Synth(); s.rest(600)
+    slide(s, fwd=-1.0); s.rest(200); s.feed(eng)
+    assert out.y > 200
+    y = out.y
+    slide(s, right=1.0); s.rest(200); s.feed(eng)
+    assert out.x > 200 and abs(out.y - y) < 40
+    x = out.x
+    slide(s, right=-1.0); s.rest(200); s.feed(eng)
+    assert out.x < x - 200
+
+
+def test_table_resting_hand_does_not_drift():
+    cfg, out, eng, ev = make_table()
+    s = Synth()
+    s.base = (0.15, -0.1, 9.81)    # slightly tilted desk / wrist
+    s.rest(5000)
+    s.feed(eng)
+    assert abs(out.x) < 5 and abs(out.y) < 5
+
+
+def test_table_pinch_still_clicks_and_slide_does_not():
+    cfg, out, eng, ev = make_table()
+    s = Synth(); s.rest(600)
+    s.pinch(); s.rest(700); s.feed(eng)
+    assert out.of("click") == [("click", "left", 1)]
+    slide(s, fwd=1.0, peak=6.0, ms=250); s.rest(700); s.feed(eng)   # jerky slide
+    assert out.of("click") == [("click", "left", 1)]
+
+
+def test_mode_switch_and_voice_command():
+    cfg, out, eng, ev = make()
+    eng.set_mode("table")
+    assert cfg["cursor_mode"] == "table" and "mode" in [e for e, _ in ev]
+    assert commands.parse("Table mode.") == ("mode", "table")
+    assert commands.parse("air mode") == ("mode", "air")
+
+
+def test_table_double_pinch_then_slide_drags():
+    cfg, out, eng, ev = make_pos()
+    cfg["cursor_mode"] = "table"
+    s = Synth(); s.rest(600)
+    s.pinch(); s.rest(200); s.pinch(); s.rest(160)
+    slide(s, right=1.0); s.rest(200)
+    s.feed(eng)
+    assert eng.dragging and len(out.of("press")) == 1 and out.x > 100
+    s.pinch(); s.rest(600); s.feed(eng)
+    assert not eng.dragging and out.of("click") == []

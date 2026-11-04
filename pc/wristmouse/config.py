@@ -7,7 +7,7 @@ import sys
 import threading
 
 APP_NAME = "WristMouse"
-VERSION = "1.6.0"
+VERSION = "1.7.0"
 
 log = logging.getLogger("wristmouse")
 
@@ -36,6 +36,10 @@ DEFAULTS = {
     "connection": "auto",          # auto | wifi | bluetooth
     "tcp_port": 47320,
     "udp_port": 47321,
+    "cursor_mode": "air",          # air (point your forearm) | table (slide your hand like a mouse)
+    "table_gain": 30000.0,         # pixels per metre of hand movement
+    "table_accel": 1.0,
+    "table_y_gain": 1.0,
     # cursor (air mouse, world-aligned)
     "cursor_gain": 900.0,          # pixels per radian
     "cursor_accel": 0.5,

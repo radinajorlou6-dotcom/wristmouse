@@ -34,6 +34,8 @@ COMMANDS = {
     "drop": ("drag", False), "let go": ("drag", False), "release": ("drag", False),
     "drop it": ("drag", False),
     "scroll up": ("scroll", 5), "scroll down": ("scroll", -5),
+    "table mode": ("mode", "table"), "desk mode": ("mode", "table"), "mouse mode": ("mode", "table"),
+    "air mode": ("mode", "air"), "air mouse": ("mode", "air"), "pointer mode": ("mode", "air"),
     "pause mouse": ("mouse", False), "stop mouse": ("mouse", False),
     "start mouse": ("mouse", True), "resume mouse": ("mouse", True),
     # cancel

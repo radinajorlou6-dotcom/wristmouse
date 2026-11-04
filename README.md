@@ -13,6 +13,7 @@ The watch app is inside it. Install it from the laptop app's **Install on watch*
 |---|---|
 | Turn palm up, hold ~1 s | Pause / resume the mouse (watch buzzes once = on, twice = paused) |
 | Point / swing your forearm | Move the cursor (works palm-down or sideways, no setup) |
+| **Table mode:** slide your hand on the desk | Move the cursor like a real mouse: forward = up, back = down. Switch with the button at the top of the window or say "table mode" / "air mode" |
 | Pinch thumb + index finger | Left click |
 | Double pinch | Right click |
 | Raise the watch to your mouth (hold ½ s) | Voice typing. Talk, then lower your arm and it types (triple pinch is an option in settings) |

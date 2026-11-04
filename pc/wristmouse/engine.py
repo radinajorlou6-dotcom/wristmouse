@@ -2,7 +2,8 @@
 
 Gestures
     palm up, hold ~1s ........ pause / resume the mouse (the "clutch")
-    point / swing the forearm  move the cursor (air mouse)
+    point / swing the forearm  move the cursor (air mode)
+    slide hand on the desk ... move the cursor like a mouse (table mode)
     single finger pinch ...... left click
     double pinch ............. right click
     double pinch, then move .. drag (hold the left button); pinch again to drop
@@ -37,6 +38,11 @@ RAISE_ON_X, RAISE_ON_Z = 0.75, 0.45
 RAISE_OFF_X, RAISE_OFF_Z = 0.55, 0.65
 RAISE_UNDO_MS = 1100       # cursor/scroll caused by lifting the arm gets undone
 DRAG_MAX_MS = 60_000       # safety: drop automatically after a minute
+# table mode: hand slides on the desk, velocity comes from integrating linear acceleration
+TABLE_LEAK_S = 0.6         # velocity leaks away with this time constant (limits drift)
+TABLE_STILL_MS = 60        # this long without motion = hand stopped -> velocity reset to 0
+TABLE_DEADZONE = 0.006     # m/s
+TABLE_CLICK_MAX_V = 0.08   # m/s; pinches only count while the hand isn't sliding
 GAP_RESET_MS = 250
 G = 9.81
 FOREARM = (1.0, 0.0, 0.0)  # the watch's x axis runs along the forearm
@@ -106,6 +112,9 @@ class Engine:
         self.still_since = None
         self._peak_decay_t = None
         self.rx = self.ry = 0.0              # lightly smoothed rates
+        self.vf = self.vr = 0.0              # table mode: hand velocity forward / right (m/s)
+        self.table_quiet_since = None
+        self.speeds = collections.deque()    # (t, hand speed) for checking table-mode taps
 
     def set_active(self, active: bool, t=None):
         if active == self.active:
@@ -140,7 +149,8 @@ class Engine:
             return
         w = [w_raw[i] - self.bias[i] for i in range(3)]
         wmag = _norm(w)
-        self._update_gravity(a, w, dt)
+        self.table = c["cursor_mode"] == "table"
+        self._update_gravity(a, w, dt, wmag)
         m = math.dist(a, self.prev_a)
         self.prev_a = list(a)
         self._update_bias(t, w_raw, wmag)
@@ -185,12 +195,17 @@ class Engine:
             return
         yaw, pitch, roll = self._world_rates(w, up)
         self._flick(t, pitch, roll)
+        if self.table:
+            self._table_velocity(t, dt, a, up, wmag)
         self._pinch(t, m, wmag)
         self._resolve_taps(t)
-        self._cursor(t, dt, yaw, pitch)
+        if self.table:
+            self._table_cursor(t, dt, yaw)
+        else:
+            self._cursor(t, dt, yaw, pitch)
 
     # ------------------------------------------------------------- internals
-    def _update_gravity(self, a, w, dt):
+    def _update_gravity(self, a, w, dt, wmag=0.0):
         """Gyro-propagated gravity with a slow accelerometer correction (complementary filter).
         Stays accurate while the arm is moving, unlike a plain low-pass of the accelerometer."""
         g = self.g
@@ -203,6 +218,10 @@ class Engine:
             gn = _norm(g) or 1.0
             agree = _dot(a, g) / (an * gn)
             tau = 0.6 if agree > 0.5 else 0.08  # way off (e.g. missed rotation): re-sync fast
+            if getattr(self, "table", False) and agree > 0.5:
+                # sliding on a desk barely rotates the watch, so trust the accelerometer only when
+                # it's clearly just gravity; otherwise the slide itself would leak into "down"
+                tau = 0.15 if (abs(an - G) < 0.12 and wmag < 0.08) else 3.0
             k = dt / (tau + dt)
             for i in range(3):
                 g[i] += k * (a[i] - g[i])
@@ -337,6 +356,8 @@ class Engine:
             rm.popleft()
         if m < thr or wmag > c["pinch_max_gyro"]:
             return
+        if self.table and math.hypot(self.vf, self.vr) > TABLE_CLICK_MAX_V:
+            return  # starting/stopping a slide can jolt like a pinch
         if self.pinch_blocked():
             return  # the watch's own vibration shakes the accelerometer
         if t < self.calm_until:
@@ -398,10 +419,23 @@ class Engine:
         elif not on and self.dragging:
             self._drop(self.last_t, "voice")
 
+    def _slid_after(self, t0):
+        """Table mode: did the hand start sliding right after this 'tap'? Then it was the jolt of
+        a slide starting, not a pinch."""
+        return any(t0 <= st <= t0 + 150 and v > TABLE_CLICK_MAX_V for st, v in self.speeds)
+
     def _resolve_taps(self, t):
         if not self.taps:
             return
         c = self.cfg
+        if self.table and len(self.taps) == 1:
+            # a lone "tap" followed by sliding is the jolt of the slide starting, not a pinch
+            # (after a double pinch, sliding is a drag, so that case is left alone)
+            if t - self.taps[0] < 150:
+                return
+            if self._slid_after(self.taps[0]):
+                self.taps.clear()
+                return
         if len(self.taps) == 2 and c["drag_enabled"]:
             mx, my = self._moved_since(self.taps[-1])
             if math.hypot(mx, my) >= c["drag_start_px"]:
@@ -450,6 +484,78 @@ class Engine:
         if dx or dy:
             self._move(t, dx, dy)
             self.history.append((t, dx, dy))
+
+    # ------------------------------------------------------------ table mode
+    def _table_axes(self, up):
+        """Forward (towards your fingers) and right, both flat on the desk, in watch coordinates."""
+        sx = -1.0 if self.cfg["invert_y"] else 1.0   # watch worn flipped: fingers are towards -x
+        d = sx * up[0]
+        f = (sx - d * up[0], -d * up[1], -d * up[2])
+        fn = _norm(f)
+        if fn < 0.4:
+            return None   # forearm pointing up/down: not lying on a desk
+        f = (f[0] / fn, f[1] / fn, f[2] / fn)
+        return f, _cross(f, up)
+
+    def _table_velocity(self, t, dt, a, up, wmag):
+        axes = self._table_axes(up)
+        if axes is None:
+            self.vf = self.vr = 0.0
+            return
+        f, r = axes
+        g = self.g
+        lin = (a[0] - g[0], a[1] - g[1], a[2] - g[2])   # acceleration with gravity removed
+        an = _norm(a)
+        if abs(an - G) < 0.3 and wmag < 0.25 and _norm(lin) < 0.3:
+            if self.table_quiet_since is None:
+                self.table_quiet_since = t
+            elif t - self.table_quiet_since >= TABLE_STILL_MS:
+                self.vf = self.vr = 0.0          # hand has stopped: kill any integration drift
+                return
+        else:
+            self.table_quiet_since = None
+        leak = math.exp(-dt / TABLE_LEAK_S)
+        self.vf = self.vf * leak + _dot(lin, f) * dt
+        self.vr = self.vr * leak + _dot(lin, r) * dt
+        lim = 3.0
+        self.vf = max(-lim, min(lim, self.vf))
+        self.vr = max(-lim, min(lim, self.vr))
+        sp = self.speeds
+        sp.append((t, math.hypot(self.vf, self.vr)))
+        while sp and sp[0][0] < t - 1500:
+            sp.popleft()
+
+    def _table_shape(self, v):
+        c = self.cfg
+        s = abs(v) - TABLE_DEADZONE
+        if s <= 0:
+            return 0.0
+        # mouse-style acceleration: slow = precise, fast = covers the screen
+        return math.copysign(c["table_gain"] * s * (1.0 + c["table_accel"] * s / 0.25), v)
+
+    def _table_cursor(self, t, dt, yaw):
+        c = self.cfg
+        while self.history and self.history[0][0] < t - 2500:
+            self.history.popleft()
+        if t < self.freeze_until:
+            return
+        dx = self._table_shape(self.vr) * dt
+        dy = -self._table_shape(self.vf) * dt * c["table_y_gain"]   # forward = up the screen
+        if c["invert_x"]:
+            dx = -dx
+        if not (math.isfinite(dx) and math.isfinite(dy)):
+            self.vf = self.vr = 0.0
+            return
+        if dx or dy:
+            self._move(t, dx, dy)
+            self.history.append((t, dx, dy))
+
+    def set_mode(self, mode: str):
+        if mode == self.cfg["cursor_mode"]:
+            return
+        self.cfg["cursor_mode"] = mode
+        self.vf = self.vr = 0.0
+        self.notify("mode", mode=mode)
 
     def flush(self):
         """Resolve any waiting taps immediately (e.g. when the stream stops)."""

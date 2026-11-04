@@ -170,6 +170,14 @@ class Hub:
             self.flash("drop", {"pinch": "Dropped", "voice": "Dropped", "paused": "Dropped (mouse paused)",
                                 "timeout": "Dropped (held too long)"}.get(why, "Dropped"))
             self.haptic(30)
+        elif ev == "mode":
+            label = "Table mode" if kw["mode"] == "table" else "Air mode"
+            self.event(label)
+            self.flash("mode", label)
+            try:
+                self.cfg.save()
+            except Exception:
+                pass
         elif ev == "dictate":
             self.voice.start()
         elif ev == "lowered":

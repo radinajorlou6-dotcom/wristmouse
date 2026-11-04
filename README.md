@@ -66,3 +66,17 @@ pc/      Windows app (Python). All gesture recognition, Whisper speech-to-text, 
 The line protocol is documented at the top of `pc/wristmouse/hub.py`. Every push to `main` builds both apps in GitHub Actions, runs the tests plus a self-test of the packaged exe, and publishes a release.
 
 Run from source: `cd pc && pip install -r requirements.txt && python run.py`. Tests: `python -m pytest tests`.
+
+## Signing key
+
+The watch app's release key is not stored in the repo. To build your own signed release:
+
+```
+keytool -genkeypair -v -keystore wristmouse.jks -alias wristmouse -keyalg RSA -keysize 2048 -validity 10000
+base64 -w0 wristmouse.jks | gh secret set WM_KEYSTORE_B64
+gh secret set WM_KEYSTORE_PASSWORD
+gh secret set WM_KEY_PASSWORD
+gh secret set WM_KEY_ALIAS      # the alias you chose, e.g. wristmouse
+```
+
+Local builds without these variables are signed with the Android debug key. A watch that has an app signed with a different key must uninstall it before the new one can be installed.

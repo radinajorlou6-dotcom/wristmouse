@@ -16,22 +16,24 @@ android {
     }
 
     signingConfigs {
-        create("release") {
-            // Fixed key kept in the repo so every build can update the last one in place.
-            storeFile = file("wristmouse.jks")
-            storePassword = "wristmouse"
-            keyAlias = "wristmouse"
-            keyPassword = "wristmouse"
+        // The release key is NOT in the repo. CI (and local release builds) pass it in through
+        // these environment variables; see the README section "Signing key".
+        val ksPath = System.getenv("WM_KEYSTORE_PATH")
+        if (ksPath != null) {
+            create("release") {
+                storeFile = file(ksPath)
+                storePassword = System.getenv("WM_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("WM_KEY_ALIAS")
+                keyPassword = System.getenv("WM_KEY_PASSWORD")
+            }
         }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("release")
-        }
-        debug {
-            signingConfig = signingConfigs.getByName("release")
+            // Without the env vars (local builds), fall back to the default debug key.
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
     }
 

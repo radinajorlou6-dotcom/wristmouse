@@ -11,3 +11,5 @@ watch/app/build/
 watch/local.properties
 .idea/
 *.iml
+*.jks
+*.keystore

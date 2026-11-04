@@ -35,8 +35,22 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.11.1"
+      - name: Prepare signing key
+        env:
+          WM_KEYSTORE_B64: ${{ secrets.WM_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$WM_KEYSTORE_B64" ]; then
+            echo "::error title=signing::Missing WM_KEYSTORE_B64 secret. See README, 'Signing key'."
+            exit 1
+          fi
+          echo "$WM_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/wristmouse.jks"
+          echo "WM_KEYSTORE_PATH=$RUNNER_TEMP/wristmouse.jks" >> "$GITHUB_ENV"
+          echo "WM_KEY_ALIAS=${{ secrets.WM_KEY_ALIAS }}" >> "$GITHUB_ENV"
       - name: Build
         working-directory: watch
+        env:
+          WM_KEYSTORE_PASSWORD: ${{ secrets.WM_KEYSTORE_PASSWORD }}
+          WM_KEY_PASSWORD: ${{ secrets.WM_KEY_PASSWORD }}
         run: |
           set -o pipefail
           gradle assembleRelease --no-daemon --stacktrace 2>&1 | tee build.log
